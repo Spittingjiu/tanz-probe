@@ -2359,10 +2359,10 @@ function updateServerDetailContent(serverId) {
   }
 
   const nodeTr = s.traffic || {};
-  const lifetimeTraffic = Math.max((nodeTr.lifetimeBytes !== undefined) ? nodeTr.lifetimeBytes : bootTotal, bootTotal);
   const bootRx = m.net_rx_total || 0;
   const bootTx = m.net_tx_total || 0;
   const bootTotal = bootRx + bootTx;
+  const lifetimeTraffic = Math.max((nodeTr.lifetimeBytes !== undefined) ? nodeTr.lifetimeBytes : bootTotal, bootTotal);
 
   const ltEl = document.getElementById('modalLifetimeTraffic');
   if (ltEl) ltEl.innerText = formatBytes(lifetimeTraffic, 1);
