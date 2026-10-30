@@ -1,5 +1,5 @@
 // Tanz Probe Service Worker (PWA Cache & Offline Support)
-const CACHE_NAME = 'tanz-probe-v43.0';
+const CACHE_NAME = 'tanz-probe-v49.0';
 const PRECACHE_URLS = [
   '/',
   '/manifest.json',
@@ -37,15 +37,21 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // 3. Network-first for HTML pages
-  if (event.request.mode === 'navigate') {
+  // 3. Network-first for HTML pages and app scripts (.js, .html)
+  if (event.request.mode === 'navigate' || url.pathname.endsWith('.js') || url.pathname.endsWith('.html')) {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match(event.request) || caches.match('/'))
+      fetch(event.request).then(networkResponse => {
+        if (networkResponse && networkResponse.status === 200) {
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseToCache));
+        }
+        return networkResponse;
+      }).catch(() => caches.match(event.request) || caches.match('/'))
     );
     return;
   }
 
-  // 4. Stale-while-revalidate for local same-origin static assets
+  // 4. Stale-while-revalidate for local same-origin static assets (images, icons, etc.)
   event.respondWith(
     caches.match(event.request).then(cachedResponse => {
       const fetchPromise = fetch(event.request).then(networkResponse => {

@@ -945,9 +945,15 @@
                 </h4>
                 <span class="text-xs text-purple-600 font-mono font-bold" id="modalLifetimeTraffic">--</span>
               </div>
-              <div class="p-2 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between text-xs font-mono">
-                <span class="text-[11px] text-slate-500 shrink-0 whitespace-nowrap">开机流量</span>
-                <span class="text-[11px] text-slate-800 font-semibold shrink-0 whitespace-nowrap" id="modalBootTraffic">--</span>
+              <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-100 text-xs font-mono space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="text-[11px] text-slate-500 font-medium">本次开机</span>
+                  <span class="text-[11px] text-slate-800 font-bold tabular-nums" id="modalBootTraffic">--</span>
+                </div>
+                <div class="flex items-center justify-between text-[10.5px] border-t border-slate-200/50 pt-1 text-slate-600">
+                  <span class="text-emerald-600 font-medium tabular-nums" id="modalBootRx">↓ --</span>
+                  <span class="text-indigo-600 font-medium tabular-nums" id="modalBootTx">↑ --</span>
+                </div>
               </div>
               <div class="hidden" id="modalTotalTraffic">--</div>
             </div>
@@ -1307,7 +1313,7 @@
     </div>
   </div>
 
-  <script src="/app.js?v=44.0"></script>
+  <script src="/app.js?v=49.0"></script>
 
   <!-- ========================================================
        Zero-GC Engine Modal (自研 Zero-GC 高性能引擎架构与特色)

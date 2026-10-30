@@ -2368,7 +2368,13 @@ function updateServerDetailContent(serverId) {
   if (ltEl) ltEl.innerText = formatBytes(lifetimeTraffic, 1);
 
   const btEl = document.getElementById('modalBootTraffic');
-  if (btEl) btEl.innerText = `${formatBytes(bootTotal, 1)} (↓${formatBytes(bootRx, 0)} ↑${formatBytes(bootTx, 0)})`;
+  if (btEl) btEl.innerText = formatBytes(bootTotal, 1);
+
+  const brxEl = document.getElementById('modalBootRx');
+  if (brxEl) brxEl.innerText = `↓ ${formatBytes(bootRx, 1)}`;
+
+  const btxEl = document.getElementById('modalBootTx');
+  if (btxEl) btxEl.innerText = `↑ ${formatBytes(bootTx, 1)}`;
 
   const totalTrafficEl = document.getElementById('modalTotalTraffic');
   if (totalTrafficEl) {
