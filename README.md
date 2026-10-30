@@ -177,8 +177,11 @@ tanz-probe/
 
 本项目在开发与演进过程中，深度参考并受益于开源社区众多优秀的网络诊断与监控项目，特此致以诚挚的感谢：
 
-1. **全国 31 省份网络时延与测速点位**：
-   - 感谢开源网络测速与回程评测社区整理的**中国电信、中国联通、中国移动全国 31 个省份核心骨干网、省网网关与低延迟 DNS 采样端点**，为多维网络雷达拓扑与省份综合评分提供了精准、权威的真实延迟测算依据。
+1. **全国 31 个省份三网网络时延与测速节点数据来源**：
+   - **[ZStatic CDN](https://www.zstaticcdn.com/)**（官网：[https://www.zstaticcdn.com](https://www.zstaticcdn.com/)）：
+     本项目全国 31 个省份直辖市、三大运营商（中国电信 `*-ct-v4.ip.zstaticcdn.com:80`、中国联通 `*-cu-v4.ip.zstaticcdn.com:80`、中国移动 `*-cm-v4.ip.zstaticcdn.com:80`）覆盖的 93+ 个分布式边缘网络实时测速与时延采样端点，数据源及网络节点规范直接来源于 **[ZStatic CDN 全球加速与节点网络](https://www.zstaticcdn.com/)**（节点 API 接口：`https://www.zstaticcdn.com/api/v1/DescribeAllNodes`），特此向 ZStatic 团队为开源生态提供的高可用多线测试网络致以崇高谢意！
+   - **[ITDOG (IT狗)](https://www.itdog.cn/)**（官网：[https://www.itdog.cn](https://www.itdog.cn/)）：
+     国内知名的多线即时网络路由与 Ping 诊断分析平台，为本项目的三网网络时延雷达图与多维评分模型提供了宝贵的拓扑对齐思路。
 2. **三网回程网络线路诊断 (Backhaul Tracing)**：
    - 感谢开源路由追踪与网络分析工具（[NextTrace](https://github.com/nxt-trace/nexttrace)、[BestTrace](https://www.ipip.net/) 等）关于电信 163 / CN2 GIA、联通 4837 / 9929、移动 CMI 等运营商骨干线路特征跳数识别的开源实践。
 3. **原生流媒体与全球 AI 服务解锁深度探测**：
