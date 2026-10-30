@@ -1770,12 +1770,12 @@ function renderTable(servers) {
           ${(() => {
             const tr = s.traffic || {};
             const limitGB = Number(s.trafficLimitGB) || 0;
-            if (!limitGB) {
-              return lifetimeStr + '<div class="mt-1"><span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200 inline-block">不限流量</span></div>';
-            }
             const lifetimeBytes = Math.max((tr.lifetimeBytes !== undefined) ? tr.lifetimeBytes : (rxTotal + txTotal), (rxTotal + txTotal));
             const bootBytes = rxTotal + txTotal;
             const lifetimeStr = `<div>总计 <b class="text-slate-900 font-bold">${formatBytes(lifetimeBytes, 1)}</b></div><div class="text-[10px] text-slate-400">启动: ${formatBytes(bootBytes, 1)}</div>`;
+            if (!limitGB) {
+              return lifetimeStr + '<div class="mt-1"><span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200 inline-block">不限流量</span></div>';
+            }
             const usedGB = tr.usedGB !== undefined ? tr.usedGB : +(lifetimeBytes / (1024 * 1024 * 1024)).toFixed(1);
             const pct = tr.percent !== undefined ? tr.percent : Math.min(100, Math.round((usedGB / limitGB) * 100));
             const isWarn = pct >= (s.trafficAlertPercent || 80);
@@ -3151,7 +3151,7 @@ document.addEventListener('DOMContentLoaded', () => {
 let deferredPwaPrompt = null;
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=32.0').then(reg => {
+    navigator.serviceWorker.register('/sw.js?v=43.0').then(reg => {
       console.log('Tarnz PWA ServiceWorker registered with scope:', reg.scope);
     }).catch(err => {
       console.log('PWA ServiceWorker registration skipped:', err);

@@ -1,5 +1,5 @@
 // Tanz Probe Service Worker (PWA Cache & Offline Support)
-const CACHE_NAME = 'tanz-probe-v32.0';
+const CACHE_NAME = 'tanz-probe-v43.0';
 const PRECACHE_URLS = [
   '/',
   '/manifest.json',
@@ -26,12 +26,18 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // Network-only for real-time WebSocket, dynamic APIs and report posts
+  // 1. Strictly bypass all cross-origin requests (CDNs like tailwindcss, jsdelivr, google fonts)
+  // Let the browser network handle them directly so they are NEVER blocked by Service Worker!
+  if (url.origin !== self.location.origin) {
+    return;
+  }
+
+  // 2. Network-only for real-time WebSocket, dynamic APIs and report posts
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws')) {
     return;
   }
 
-  // Network-first for HTML pages
+  // 3. Network-first for HTML pages
   if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request).catch(() => caches.match(event.request) || caches.match('/'))
@@ -39,7 +45,7 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Stale-while-revalidate for static assets
+  // 4. Stale-while-revalidate for local same-origin static assets
   event.respondWith(
     caches.match(event.request).then(cachedResponse => {
       const fetchPromise = fetch(event.request).then(networkResponse => {
