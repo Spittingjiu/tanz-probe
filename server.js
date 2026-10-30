@@ -812,6 +812,77 @@ function checkHeartbeats() {
 }
 setInterval(checkHeartbeats, 2000);
 
+// =====================================================================
+// Fleet Historical Peak Throughput Engine (Zero-GC Persistent Storage)
+// =====================================================================
+const HISTORICAL_PEAK_FILE = path.join(DATA_DIR, 'historical_peak.json');
+let historicalPeak = {
+  rx: 0,
+  tx: 0,
+  combined: 0,
+  timestamp: 0,
+  formattedDate: ''
+};
+
+function loadHistoricalPeak() {
+  try {
+    if (fs.existsSync(HISTORICAL_PEAK_FILE)) {
+      const data = JSON.parse(fs.readFileSync(HISTORICAL_PEAK_FILE, 'utf8'));
+      if (data && typeof data === 'object') {
+        historicalPeak.rx = Number(data.rx) || 0;
+        historicalPeak.tx = Number(data.tx) || 0;
+        historicalPeak.combined = Number(data.combined) || (historicalPeak.rx + historicalPeak.tx);
+        historicalPeak.timestamp = Number(data.timestamp) || 0;
+        historicalPeak.formattedDate = data.formattedDate || '';
+      }
+    }
+  } catch (e) {
+    console.error('Error loading historical_peak.json:', e);
+  }
+}
+loadHistoricalPeak();
+
+let lastPeakSaveTime = 0;
+function updateHistoricalPeak(rxSpeed, txSpeed) {
+  let changed = false;
+  const now = Date.now();
+  const rx = Number(rxSpeed) || 0;
+  const tx = Number(txSpeed) || 0;
+  const combined = rx + tx;
+
+  if (rx > historicalPeak.rx) {
+    historicalPeak.rx = rx;
+    changed = true;
+  }
+  if (tx > historicalPeak.tx) {
+    historicalPeak.tx = tx;
+    changed = true;
+  }
+  if (combined > (historicalPeak.combined || 0)) {
+    historicalPeak.combined = combined;
+    changed = true;
+  }
+
+  if (changed) {
+    historicalPeak.timestamp = now;
+    const d = new Date(now);
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const h = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    historicalPeak.formattedDate = `${m}-${day} ${h}:${min}`;
+
+    if (now - lastPeakSaveTime > 5000) {
+      lastPeakSaveTime = now;
+      try {
+        fs.writeFileSync(HISTORICAL_PEAK_FILE, JSON.stringify(historicalPeak, null, 2), 'utf8');
+      } catch (err) {
+        console.error('Error saving historical_peak.json:', err);
+      }
+    }
+  }
+}
+
 // Global Stats Calculation
 function getGlobalStats() {
   let totalServers = serverRegistry.length;
@@ -849,6 +920,10 @@ function getGlobalStats() {
   const memUsagePercent = totalMem > 0 ? +((totalMemUsed / totalMem) * 100).toFixed(1) : 0;
   const diskUsagePercent = totalDisk > 0 ? +((totalDiskUsed / totalDisk) * 100).toFixed(1) : 0;
 
+  if (totalNetRxSpeed > 0 || totalNetTxSpeed > 0) {
+    updateHistoricalPeak(totalNetRxSpeed, totalNetTxSpeed);
+  }
+
   return {
     totalServers,
     onlineServers,
@@ -864,6 +939,7 @@ function getGlobalStats() {
     totalNetTxSpeed,
     totalNetRxBytes,
     totalNetTxBytes,
+    historicalPeak,
     avgCpu
   };
 }
@@ -2978,6 +3054,15 @@ app.post('/api/admin/trusted-devices/bind-current', requireAdmin, (req, res) => 
       message: `已成功将当前终端 [${devName}] 绑定至当前 IP [${clientIp}]`
     });
   }
+});
+
+app.post('/api/admin/historical-peak/reset', requireAdmin, (req, res) => {
+  historicalPeak = { rx: 0, tx: 0, combined: 0, timestamp: 0, formattedDate: '' };
+  try {
+    fs.writeFileSync(HISTORICAL_PEAK_FILE, JSON.stringify(historicalPeak, null, 2), 'utf8');
+  } catch (err) {}
+  addAuditLog('settings', '重置全网历史吞吐峰值记录');
+  res.json({ ok: true, message: '全网历史吞吐峰值记录已成功重置', historicalPeak });
 });
 
 app.get('/api/admin/security/status', requireAdmin, (req, res) => {

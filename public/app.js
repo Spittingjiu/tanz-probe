@@ -409,6 +409,17 @@ function handleDataUpdate(raw) {
   const data = (raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)) ? raw.data : raw;
 
 
+    if (data.global) {
+    state.global = data.global;
+    if (data.global.historicalPeak) {
+      if (!state.historicalPeak) state.historicalPeak = { rx: 0, tx: 0, combined: 0, formattedDate: '' };
+      const srvHp = data.global.historicalPeak;
+      if ((srvHp.rx || 0) > (state.historicalPeak.rx || 0)) state.historicalPeak.rx = srvHp.rx;
+      if ((srvHp.tx || 0) > (state.historicalPeak.tx || 0)) state.historicalPeak.tx = srvHp.tx;
+      if ((srvHp.combined || 0) > (state.historicalPeak.combined || 0)) state.historicalPeak.combined = srvHp.combined;
+      if (srvHp.formattedDate) state.historicalPeak.formattedDate = srvHp.formattedDate;
+    }
+  }
   if (data.services) state.services = data.services;
   if (data.ssl) state.ssl = data.ssl;
 
@@ -781,8 +792,42 @@ function updateKomariDashboard() {
   th.rx[th.rx.length - 1] = state.smoothRxSpeed || 0;
   th.tx[th.tx.length - 1] = state.smoothTxSpeed || 0;
 
-  if ((state.smoothRxSpeed || 0) > (state.peakRxSpeed || 0)) state.peakRxSpeed = state.smoothRxSpeed;
+    if ((state.smoothRxSpeed || 0) > (state.peakRxSpeed || 0)) state.peakRxSpeed = state.smoothRxSpeed;
   if ((state.smoothTxSpeed || 0) > (state.peakTxSpeed || 0)) state.peakTxSpeed = state.smoothTxSpeed;
+
+  // Track Historical All-time Peak (Server synchronized & LocalStorage persistent)
+  if (!state.historicalPeak) {
+    try {
+      const cached = localStorage.getItem('tanz_historical_peak');
+      state.historicalPeak = cached ? JSON.parse(cached) : { rx: 0, tx: 0, combined: 0, formattedDate: '' };
+    } catch (e) {
+      state.historicalPeak = { rx: 0, tx: 0, combined: 0, formattedDate: '' };
+    }
+  }
+
+  let hpUpdated = false;
+  const currRx = state.smoothRxSpeed || 0;
+  const currTx = state.smoothTxSpeed || 0;
+  if (currRx > (state.historicalPeak.rx || 0)) {
+    state.historicalPeak.rx = currRx;
+    hpUpdated = true;
+  }
+  if (currTx > (state.historicalPeak.tx || 0)) {
+    state.historicalPeak.tx = currTx;
+    hpUpdated = true;
+  }
+  const currCombined = currRx + currTx;
+  if (currCombined > (state.historicalPeak.combined || 0)) {
+    state.historicalPeak.combined = currCombined;
+    hpUpdated = true;
+  }
+  if (hpUpdated) {
+    const d = new Date();
+    state.historicalPeak.formattedDate = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    try {
+      localStorage.setItem('tanz_historical_peak', JSON.stringify(state.historicalPeak));
+    } catch (e) {}
+  }
 
   renderThroughputSparkline();
 
@@ -791,13 +836,35 @@ function updateKomariDashboard() {
   if (peakEl) {
     if (isMobile) {
       const maxPeak = Math.max(state.peakRxSpeed || 0, state.peakTxSpeed || 0);
-      peakEl.innerText = `峰值: ${formatSpeed(maxPeak)}`;
+      peakEl.innerText = `本次峰值: ${formatSpeed(maxPeak)}`;
     } else {
-      peakEl.innerText = `峰值: ↑ ${formatSpeed(state.peakRxSpeed || 0)} · ↓ ${formatSpeed(state.peakTxSpeed || 0)}`;
+      peakEl.innerText = `本次峰值: ↓ ${formatSpeed(state.peakRxSpeed || 0)} · ↑ ${formatSpeed(state.peakTxSpeed || 0)}`;
     }
   }
 
-  const activeNetNodesEl = document.getElementById('kpiActiveNetNodes');
+  const histPeakEl = document.getElementById('kpiNetHistoricalPeak');
+  const histPeakValEl = document.getElementById('kpiNetHistoricalPeakVal');
+  const histPeakTimeEl = document.getElementById('kpiNetHistoricalPeakTime');
+  if (histPeakValEl) {
+    if (isMobile) {
+      const maxHist = Math.max(state.historicalPeak.rx || 0, state.historicalPeak.tx || 0);
+      histPeakValEl.innerText = formatSpeed(maxHist);
+    } else {
+      histPeakValEl.innerText = `↓ ${formatSpeed(state.historicalPeak.rx || 0)} · ↑ ${formatSpeed(state.historicalPeak.tx || 0)}`;
+    }
+  } else if (histPeakEl) {
+    if (isMobile) {
+      const maxHist = Math.max(state.historicalPeak.rx || 0, state.historicalPeak.tx || 0);
+      histPeakEl.innerText = `历史峰值: ${formatSpeed(maxHist)}`;
+    } else {
+      histPeakEl.innerText = `历史峰值: ↓ ${formatSpeed(state.historicalPeak.rx || 0)} · ↑ ${formatSpeed(state.historicalPeak.tx || 0)}`;
+    }
+  }
+  if (histPeakTimeEl) {
+    histPeakTimeEl.innerText = state.historicalPeak.formattedDate || '全网纪录';
+  }
+
+const activeNetNodesEl = document.getElementById('kpiActiveNetNodes');
   if (activeNetNodesEl) {
     let activeCount = 0;
     for (const s of (state.servers || [])) {
