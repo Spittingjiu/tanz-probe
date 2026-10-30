@@ -1,0 +1,24 @@
+# Node dependencies
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# Git ignore python scripts except agent.py
+*.py
+!agent.py
+*.pyc
+__pycache__/
+
+# Sensitive / volatile runtime data
+data/*.json
+!data/servers.example.json
+!data/ping_targets.json
+!data/province_nodes.json
+
+# Logs & temp files
+*.log
+*.tmp
+*.pid
+.env
+.DS_Store
+server.js.bak

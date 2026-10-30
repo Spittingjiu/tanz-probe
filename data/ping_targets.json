@@ -1,0 +1,29 @@
+[
+  {
+    "id": "pt-prov-内蒙古-telecom",
+    "name": "内蒙古 电信",
+    "host": "nm-ct-v4.ip.zstaticcdn.com",
+    "flag": "🇨🇳",
+    "group": "内蒙古",
+    "province": "内蒙古",
+    "carrier": "telecom"
+  },
+  {
+    "id": "pt-prov-内蒙古-unicom",
+    "name": "内蒙古 联通",
+    "host": "nm-cu-v4.ip.zstaticcdn.com",
+    "flag": "🇨🇳",
+    "group": "内蒙古",
+    "province": "内蒙古",
+    "carrier": "unicom"
+  },
+  {
+    "id": "pt-prov-内蒙古-mobile",
+    "name": "内蒙古 移动",
+    "host": "nm-cm-v4.ip.zstaticcdn.com",
+    "flag": "🇨🇳",
+    "group": "内蒙古",
+    "province": "内蒙古",
+    "carrier": "mobile"
+  }
+]

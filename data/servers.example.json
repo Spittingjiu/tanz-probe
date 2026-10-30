@@ -1,0 +1,13 @@
+[
+  {
+    "id": "node-master",
+    "name": "核心主控机房",
+    "location": "本机 · 核心主控机房",
+    "region": "CN",
+    "flag": "🖥️",
+    "tag": "主控内置 / 零频核心",
+    "secret": "sec_master_default",
+    "isMaster": true,
+    "order": 0
+  }
+]

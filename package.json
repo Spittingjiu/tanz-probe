@@ -1,0 +1,28 @@
+{
+  "name": "tanz-probe",
+  "version": "2.0.0",
+  "description": "Enterprise Zero-GC Cloud Fleet Observer and Network Topology Monitor",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Spittingjiu/tanz-probe.git"
+  },
+  "keywords": [
+    "server-monitor",
+    "zero-gc",
+    "probe",
+    "telemetry",
+    "latency-meter",
+    "network-diagnostics",
+    "streaming-unlock"
+  ],
+  "author": "Spittingjiu",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.17.0"
+  }
+}
