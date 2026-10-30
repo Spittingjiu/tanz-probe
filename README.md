@@ -7,9 +7,23 @@
 [![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8.svg?logo=go)](agent.go)
 [![Node.js](https://img.shields.io/badge/Node.js-20%20LTS-339933.svg?logo=nodedotjs)](server.js)
 [![Docker](https://img.shields.io/badge/Docker-Supported-blue?logo=docker)](Dockerfile)
+[![Live Demo: Cloudflare Workers](https://img.shields.io/badge/Demo-Cloudflare%20Workers-F38020.svg?logo=cloudflare)](cloudflare-demo/README.md)
 [![Security: DNS Rebinding Immune](https://img.shields.io/badge/Security-SSRF%20%26%20DNS%20Rebinding%20Immune-success.svg)](#-安全与通信设计)
 
 > **Tanz Probe** 是一款专为极客、运维团队与基础设施发烧友打造的**高颜值、零开销、零频 GC** 分布式机群观测系统。主控面板支持 Debian/Ubuntu 一键安装，子探针支持全平台原生运行，内置全国三网回程诊断、真实原生流媒体/AI 解锁深度测试、月度流量警戒监控以及独特的**面板一键无感热迁移**功能。
+
+---
+
+## 🌐 极速无服务器演示站 (Cloudflare Workers Demo)
+
+想要向技术社区、群友或 GitHub 访客展示 Tanz Probe 极具视觉冲击力的大屏，但又不想暴露自己的真实服务器与 IP？
+
+本项目在 [`cloudflare-demo/`](cloudflare-demo/) 目录下提供了完整的 **Cloudflare Workers 0 成本无服务器演示站**：
+- ⚡ **0 服务器成本**：永久运行在 Cloudflare Workers 免费层（每天 100,000 次请求额度）；
+- 💓 **原生 WebSocket 实时推流**：借助 Cloudflare `WebSocketPair` 实现呼吸式心跳推流，网络吞吐与仪表盘动态微幅起伏；
+- 🌍 **7 台跨国顶配机群仿真**：涵盖香港 BGP、东京 BBTEC、洛杉矶 CN2 GIA、新加坡、德国、英国及家庭内网私有云；
+- 🎬 **原生流媒体与 AI 全绿解锁展示**：真实呈现 YouTube Premium、Netflix 4K、Disney+、ChatGPT Plus、Claude 3.5 解锁检测矩阵；
+- ⏱️ **秒级极速上线**：无需安装环境，直接在 Cloudflare 网页控制台将单文件 `worker.js` 复制粘贴即可 30 秒生成公网大屏！详见 **[Cloudflare Workers 演示站部署指南](cloudflare-demo/README.md)**。
 
 ---
 
