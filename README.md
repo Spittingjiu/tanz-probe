@@ -7,23 +7,10 @@
 [![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8.svg?logo=go)](agent.go)
 [![Node.js](https://img.shields.io/badge/Node.js-20%20LTS-339933.svg?logo=nodedotjs)](server.js)
 [![Docker](https://img.shields.io/badge/Docker-Supported-blue?logo=docker)](Dockerfile)
-[![Live Demo: Cloudflare Workers](https://img.shields.io/badge/Demo-Cloudflare%20Workers-F38020.svg?logo=cloudflare)](cloudflare-demo/README.md)
-[![Security: DNS Rebinding Immune](https://img.shields.io/badge/Security-SSRF%20%26%20DNS%20Rebinding%20Immune-success.svg)](#-安全与通信设计)
+[![Demo: Cloudflare Workers](https://img.shields.io/badge/Demo-Cloudflare%20Workers-F38020.svg?logo=cloudflare)](worker.js)
+[![Security: DNS Rebinding Immune](https://img.shields.io/badge/Security-SSRF%20%26%20DNS%20Rebinding%20Immune-success.svg)](#-安全防御体系与加固规范-security--hardening)
 
-> **Tanz Probe** 是一款专为极客、运维团队与基础设施发烧友打造的**高颜值、零开销、零频 GC** 分布式机群观测系统。主控面板支持 Debian/Ubuntu 一键安装，子探针支持全平台原生运行，内置全国三网回程诊断、真实原生流媒体/AI 解锁深度测试、月度流量警戒监控以及独特的**面板一键无感热迁移**功能。
-
----
-
-## 🌐 极速无服务器演示站 (Cloudflare Workers Demo)
-
-想要向技术社区、群友或 GitHub 访客展示 Tanz Probe 极具视觉冲击力的大屏，但又不想暴露自己的真实服务器与 IP？
-
-本项目在 [`cloudflare-demo/`](cloudflare-demo/) 目录下提供了完整的 **Cloudflare Workers 0 成本无服务器演示站**：
-- ⚡ **0 服务器成本**：永久运行在 Cloudflare Workers 免费层（每天 100,000 次请求额度）；
-- 💓 **原生 WebSocket 实时推流**：借助 Cloudflare `WebSocketPair` 实现呼吸式心跳推流，网络吞吐与仪表盘动态微幅起伏；
-- 🌍 **7 台跨国顶配机群仿真**：涵盖香港 BGP、东京 BBTEC、洛杉矶 CN2 GIA、新加坡、德国、英国及家庭内网私有云；
-- 🎬 **原生流媒体与 AI 全绿解锁展示**：真实呈现 YouTube Premium、Netflix 4K、Disney+、ChatGPT Plus、Claude 3.5 解锁检测矩阵；
-- ⏱️ **秒级极速上线**：无需安装环境，直接在 Cloudflare 网页控制台将单文件 `worker.js` 复制粘贴即可 30 秒生成公网大屏！详见 **[Cloudflare Workers 演示站部署指南](cloudflare-demo/README.md)**。
+> **Tanz Probe** 是一款专为极客、运维团队与基础设施发烧友打造的**高颜值、零开销、零频 GC** 分布式机群观测系统。主控面板支持 Debian/Ubuntu 一键安装与 Docker 容器化部署，子探针支持全平台原生运行，内置全国三网回程诊断、真实原生流媒体/AI 解锁深度测试、月度流量警戒监控以及独特的**面板一键无感热迁移**功能。
 
 ---
 
@@ -38,12 +25,12 @@
 - 🔄 **面板后台一键无缝热迁移 (Seamless Hot Migration)**：
   - 在 A 机器后台发起迁移，输入 B 机器地址，即时生成 30 分钟防篡改迁移秘钥；
   - 在 B 机器后台输入秘钥与 A 机器地址，一键拉取全部节点信息、省份点位与流量配置；
-  - 所有在线子 Agent 自动感知指令，**瞬间无缝切换重定向至 B 机器上报**，无需逐台手动修改！
+  - 所有在线子 Agent 自动感知指令，**瞬间无缝切换重定向至 B 机器上报**，无需逐台手动修改；
   - A 机器交接后优雅休眠断开连接，单机器单面板运行保证数据纯净。
 - 🌐 **三网回程网络线路诊断 & 全网流媒体 AI 解锁探测**：
   - 支持节点测速与电信 163、联通 4837、移动 CMI 回程线路诊断；
   - 真实探测 YouTube、Netflix、Disney+、ChatGPT、Claude 原生/DNS 解锁状态并徽章化呈现。
-- 📊 **全国 34 省份多线时延与多维雷达**：
+- 📊 **全国 31 省份多线时延与多维雷达**：
   - 深度集成中国电信、中国联通、中国移动三网省份延迟采样与节点综合评分雷达图。
 - 🎯 **访客端到节点实时延迟测速 (Client Latency Meter)**：
   - 访客在网页端点击即可测算当前本地网络到各大机房节点的真实 HTTP / Ping 延迟，测速无感轻量。
@@ -63,7 +50,9 @@
 
 ---
 
-## 🚀 主控面板一键部署 (Debian / Ubuntu 专属)
+## 🚀 主控面板部署
+
+### 方式一：Debian / Ubuntu 一键全自动部署 (推荐)
 
 在你的 Debian 或 Ubuntu 机器上执行以下一行脚本即可全自动部署：
 
@@ -79,7 +68,7 @@ curl -fsSL https://raw.githubusercontent.com/Spittingjiu/tanz-probe/main/install
 5. 生成 16 位高强度随机初始管理密码并配置安全服务守护；
 6. 启动 `tanz-probe.service` 并输出大屏与后台访问地址及登录密钥。
 
-### 常用主控管理指令
+#### 常用主控管理指令
 ```bash
 # 查看面板运行状态
 systemctl status tanz-probe
@@ -92,13 +81,15 @@ systemctl stop tanz-probe
 
 # 查看面板实时日志
 journalctl -u tanz-probe -f
-`
+```
 
-### 🐳 Docker / Docker Compose 容器化部署 (推荐)
+---
+
+### 方式二：Docker / Docker Compose 容器化部署
 
 如果你习惯使用容器化管理基础设施，可以直接使用 Docker Compose 快速拉起主控：
 
-`ash
+```bash
 # 1. 克隆代码仓库
 git clone https://github.com/Spittingjiu/tanz-probe.git
 cd tanz-probe
@@ -108,8 +99,16 @@ docker compose up -d
 
 # 3. 查看实时运行日志与初始管理员密码
 docker compose logs -f
-`
-``
+```
+
+---
+
+### 方式三：Cloudflare Workers 无服务器极速演示 (0 成本免运维)
+
+如果想要向技术社区展示 Tanz Probe 的前端大屏，而无需购买服务器或暴露真实 IP：
+1. 登录 Cloudflare 控制台，进入 **Workers & Pages** 创建一个 Worker；
+2. 打开仓库根目录的单文件 [`worker.js`](worker.js)，全选复制并粘贴到 Worker 编辑器中，保存并部署；
+3. 即可立即生成一个包含 7 台跨国仿真节点、动态 WebSocket 推流与流媒体/AI 解锁的全球 CDN 演示大屏。
 
 ---
 
@@ -138,7 +137,7 @@ curl -fsSL http://<你的主控IP>:3000/install-agent.sh | bash -s -- --master h
 - **Linux**：`x86_64` (amd64), `aarch64` (arm64), `armv7l` (armhf), `i386`, `riscv64`
 - **macOS**：Apple Silicon (`arm64`), Intel (`x86_64`)
 - **软路由与嵌入式**：OpenWrt (`procd` 守护自启), Alpine Linux (`OpenRC`)
-- **自动降级容灾**：若系统架构无原生 Go 二进制，脚本自动无缝降级为通用异步 Python 3 轻量探针！
+- **自动降级容灾**：若系统架构无原生 Go 二进制，脚本自动无缝降级为通用异步 Python 3 轻量探针。
 
 ### 一键卸载子探针：
 ```bash
@@ -185,6 +184,7 @@ tanz-probe/
 ├── server.js              # 主控核心服务 (Express + 零频内存池 + 本机自纳管)
 ├── agent.go               # 原生高性能 Go 微核心子探针源码
 ├── agent.py               # 通用跨平台 Python 异步备用探针
+├── worker.js              # Cloudflare Workers 单文件无服务器演示站
 ├── install.sh             # Debian / Ubuntu 主控一键全自动部署脚本
 ├── install-agent.sh       # 全平台通用子探针安装/更新/卸载脚本
 ├── Dockerfile             # 生产级多阶段容器化镜像构建定义 (Node 20 Alpine)
@@ -193,7 +193,7 @@ tanz-probe/
 ├── public/                # 静态前端资源 (零频 GC 架构大屏)
 │   ├── index.html         # 监控大屏主界面
 │   ├── app.js             # 大屏前端核心渲染逻辑
-│   ├── admin.html         # 强大现代化的管理后台
+│   ├── admin.html         # 现代化管理后台
 │   ├── admin.js           # 后台交互与一键热迁移交互逻辑
 │   └── icons/             # 真实流媒体/AI 矢量官方图标
 ├── data/                  # 运行时配置持久化目录 (已纳入 .gitignore 保护)
@@ -201,11 +201,6 @@ tanz-probe/
 │   └── servers.json       # 本地运行节点数据 (受版本控制保护防覆盖)
 └── LICENSE                # MIT 开源授权协议
 ```
-
----
-
-
----
 
 ---
 
@@ -218,10 +213,9 @@ tanz-probe/
    - Node.js 核心网关仅信任由本地反代（127.0.0.1）注入的 `X-Real-IP`，杜绝任何直连伪造。
    - **彻底摒弃裸 IP 鉴权**：全面禁用仅凭来源 IP 免密直登的后门机制，防范因公网 NAT、校园网/公司局域网共享公网出口、或云提供商动态回收 IP 带来的提权风险。所有后台管理操作必须由高强度口令换取加密会话 Token。
 2. **迁移接口 SSRF 与 DNS Rebinding 免疫防御 (Anti-SSRF & DNS Rebinding Immunity)**：
-   - 在主控热迁移 POST /api/admin/migration/pull 接口中，内置严格的 URL 协议校验（仅限 HTTP/HTTPS）与异步 DNS 解析（dns.lookup）。
-   - 彻底封禁本地回环（127.0.0.0/8）、RFC 1918 私有内网网段（10.0.0.0/8、172.16.0.0/12、192.168.0.0/16）及云厂商元数据地址（169.254.169.254）。
-   - **Socket 级 IP 固化防御 TOCTOU DNS Rebinding**：针对极短 TTL 的 DNS 重绑定攻击，系统在初次 DNS 校验合法后，将经检验的公网 IP 直接固化到底层 Socket 连接参数（
-eqOptions.hostname = pinnedIp），仅将原始域名注入 Host 请求头与 TLS SNI，杜绝发起二次请求时域名解析被篡改至私网回环的 TOCTOU 安全漏洞。
+   - 在主控热迁移 `POST /api/admin/migration/pull` 接口中，内置严格的 URL 协议校验（仅限 HTTP/HTTPS）与异步 DNS 解析（`dns.lookup`）。
+   - 彻底封禁本地回环（`127.0.0.0/8`）、RFC 1918 私有内网网段（`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`）及云厂商元数据地址（`169.254.169.254`）。
+   - **Socket 级 IP 固化防御 TOCTOU DNS Rebinding**：针对极短 TTL 的 DNS 重绑定攻击，系统在初次 DNS 校验合法后，将经检验的公网 IP 直接固化到底层 Socket 连接参数（`reqOptions.hostname = pinnedIp`），仅将原始域名注入 `Host` 请求头与 TLS SNI，杜绝发起二次请求时域名解析被篡改至私网回环的 TOCTOU 安全漏洞。
 3. **探针端高危动作密码学加锁 (HMAC-SHA256 Action Signature)**：
    - 子探针接收 `migrate`（切换主控汇报地址）与 `uninstall`（远程卸载清理）等敏感动作前，必须验证由主控基于该节点静态私钥 `NodeSecret` 签发的 `HMAC-SHA256` 签名。
    - 包含 Unix 秒级时间戳与防重放校验（`|当前时间 - 签发时间| <= 300 秒`）。任何非授权伪造主控或中间人篡改指令均会被子探针底层立即丢弃。
