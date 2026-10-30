@@ -622,9 +622,51 @@ app.set('trust proxy', true);
 app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
 
-// Never cache dynamic API or HTML/JS/CSS to ensure instant updates
+// =====================================================================
+// Unified Security Response Headers Middleware (Origin Protection)
+// =====================================================================
 app.use((req, res, next) => {
+  // 1. Strict-Transport-Security (1 year, includeSubDomains, no preload for now)
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+
+  // 2. X-Content-Type-Options
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+
+  // 3. X-Frame-Options: DENY
+  res.setHeader('X-Frame-Options', 'DENY');
+
+  // 4. Referrer-Policy: default strict-origin-when-cross-origin, /admin strictly no-referrer
+  if (req.path.startsWith('/admin')) {
+    res.setHeader('Referrer-Policy', 'no-referrer');
+  } else {
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  }
+
+  // 5. Permissions-Policy
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+
+  // 6. Content-Security-Policy (retaining 'unsafe-inline' for scripts/styles until nonce migration)
+  const cspDirectives = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' cdn.tailwindcss.com cdn.jsdelivr.net unpkg.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
+    "style-src 'self' 'unsafe-inline' fonts.googleapis.com cdn.jsdelivr.net https://fonts.googleapis.com https://cdn.jsdelivr.net",
+    "font-src 'self' fonts.gstatic.com https://fonts.gstatic.com data:",
+    "img-src 'self' data: https:",
+    "connect-src 'self' wss:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "upgrade-insecure-requests"
+  ].join('; ');
+
+  res.setHeader('Content-Security-Policy', cspDirectives);
+
+  // 7. Never cache dynamic API or HTML/JS/CSS to ensure instant updates
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
   next();
 });
 
@@ -2545,10 +2587,10 @@ function requireAdmin(req, res, next) {
   // Strict Security Hardening: NO unauthenticated bare IP bypass.
   // All administrative operations strictly require cryptographically verified session token or master password.
 
-  // Token / password validation
-  const token = req.headers['x-admin-token'] || req.query.token;
+  // Token / password validation: strictly require x-admin-token in request headers; do NOT accept query param ?token=
+  const token = req.headers['x-admin-token'];
   if (!token) {
-    return res.status(401).json({ error: 'Unauthorized: Missing admin token' });
+    return res.status(401).json({ error: 'Unauthorized: Missing x-admin-token header' });
   }
 
   const session = activeSessions.get(token);
@@ -2568,7 +2610,8 @@ function requireAdmin(req, res, next) {
 
 // Check auth status & Auto-login for agent node IPs
 app.get('/api/admin/auth-status', (req, res) => {
-  const token = req.headers['x-admin-token'] || req.query.token;
+  // Strictly read from x-admin-token request header only
+  const token = req.headers['x-admin-token'];
   const ip = getClientIp(req);
   const now = Date.now();
   const isAgent = isInstalledAgentIp(ip);
