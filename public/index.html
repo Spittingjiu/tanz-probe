@@ -901,24 +901,6 @@
               </div>
             </div>
 
-            <!-- Lifetime Cumulative & Boot Traffic -->
-            <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between text-xs">
-              <div class="flex items-center space-x-2">
-                <div class="w-8 h-8 rounded-xl bg-purple-50 border border-purple-100 flex items-center justify-center text-purple-600 shrink-0">
-                  <i data-lucide="activity" class="w-4 h-4"></i>
-                </div>
-                <div>
-                  <div class="font-bold text-slate-800 text-xs">总计累计流量</div>
-                  <div class="text-[10px] text-slate-400 font-mono">面板纳管以来总吞吐</div>
-                </div>
-              </div>
-              <div class="text-right font-mono leading-tight">
-                <div class="text-xs font-bold text-slate-900" id="modalLifetimeTraffic">--</div>
-                <div class="text-[10.5px] text-slate-500 font-medium" id="modalBootTraffic">启动: --</div>
-                <div class="hidden" id="modalTotalTraffic">--</div>
-              </div>
-            </div>
-
           </div>
 
           <!-- Right Sidebar (4 cols on desktop): 三网回程诊断 + 原生流媒体与 AI 解锁 -->
@@ -952,6 +934,22 @@
               <div id="modalUnlocksGrid" class="flex flex-col space-y-1.5 text-xs">
                 <!-- Dynamically rendered via app.js -->
               </div>
+            </div>
+
+            <!-- 3. Lifetime Cumulative & Boot Traffic (总计累计流量) -->
+            <div class="space-y-1.5 pt-1">
+              <div class="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                <h4 class="text-xs font-bold text-slate-800 flex items-center space-x-1.5">
+                  <i data-lucide="activity" class="w-3.5 h-3.5 text-purple-600"></i>
+                  <span>总计累计流量</span>
+                </h4>
+                <span class="text-xs text-purple-600 font-mono font-bold" id="modalLifetimeTraffic">--</span>
+              </div>
+              <div class="p-2 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between text-xs font-mono">
+                <span class="text-[11px] text-slate-500 shrink-0 whitespace-nowrap">开机流量</span>
+                <span class="text-[11px] text-slate-800 font-semibold shrink-0 whitespace-nowrap" id="modalBootTraffic">--</span>
+              </div>
+              <div class="hidden" id="modalTotalTraffic">--</div>
             </div>
 
           </div>
