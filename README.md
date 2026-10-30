@@ -6,6 +6,8 @@
 [![Zero-GC Core](https://img.shields.io/badge/Engine-Zero--GC%2060FPS-blueviolet.svg)](#-核心特性)
 [![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8.svg?logo=go)](agent.go)
 [![Node.js](https://img.shields.io/badge/Node.js-20%20LTS-339933.svg?logo=nodedotjs)](server.js)
+[![Docker](https://img.shields.io/badge/Docker-Supported-blue?logo=docker)](Dockerfile)
+[![Security: DNS Rebinding Immune](https://img.shields.io/badge/Security-SSRF%20%26%20DNS%20Rebinding%20Immune-success.svg)](#-安全与通信设计)
 
 > **Tanz Probe** 是一款专为极客、运维团队与基础设施发烧友打造的**高颜值、零开销、零频 GC** 分布式机群观测系统。主控面板支持 Debian/Ubuntu 一键安装，子探针支持全平台原生运行，内置全国三网回程诊断、真实原生流媒体/AI 解锁深度测试、月度流量警戒监控以及独特的**面板一键无感热迁移**功能。
 
@@ -76,7 +78,24 @@ systemctl stop tanz-probe
 
 # 查看面板实时日志
 journalctl -u tanz-probe -f
-```
+`
+
+### 🐳 Docker / Docker Compose 容器化部署 (推荐)
+
+如果你习惯使用容器化管理基础设施，可以直接使用 Docker Compose 快速拉起主控：
+
+`ash
+# 1. 克隆代码仓库
+git clone https://github.com/Spittingjiu/tanz-probe.git
+cd tanz-probe
+
+# 2. 一键启动容器 (自动挂载 ./data 目录持久化数据)
+docker compose up -d
+
+# 3. 查看实时运行日志与初始管理员密码
+docker compose logs -f
+`
+``
 
 ---
 
@@ -154,17 +173,18 @@ tanz-probe/
 ├── agent.py               # 通用跨平台 Python 异步备用探针
 ├── install.sh             # Debian / Ubuntu 主控一键全自动部署脚本
 ├── install-agent.sh       # 全平台通用子探针安装/更新/卸载脚本
+├── Dockerfile             # 生产级多阶段容器化镜像构建定义 (Node 20 Alpine)
+├── docker-compose.yml     # Docker Compose 一键启动与持久化挂载配置
+├── .github/workflows/     # GitHub Actions 跨平台二进制自动化构建发布流水线
 ├── public/                # 静态前端资源 (零频 GC 架构大屏)
 │   ├── index.html         # 监控大屏主界面
 │   ├── app.js             # 大屏前端核心渲染逻辑
 │   ├── admin.html         # 强大现代化的管理后台
 │   ├── admin.js           # 后台交互与一键热迁移交互逻辑
-│   ├── tanz-agent*        # 预编译多架构探针二进制 (amd64, arm64, armv7, darwin)
 │   └── icons/             # 真实流媒体/AI 矢量官方图标
-├── data/                  # 运行时配置与持久化存储 (JSON 格式)
-│   ├── servers.json       # 节点注册列表
-│   ├── admin-config.json  # 初始高强度管理员认证凭证
-│   └── ping-targets.json  # 测速与三网线路目标配置
+├── data/                  # 运行时配置持久化目录 (已纳入 .gitignore 保护)
+│   ├── servers.example.json # 节点注册模板配置
+│   └── servers.json       # 本地运行节点数据 (受版本控制保护防覆盖)
 └── LICENSE                # MIT 开源授权协议
 ```
 
@@ -183,9 +203,11 @@ tanz-probe/
    - Nginx 反向代理层强制配置 `proxy_set_header X-Real-IP $remote_addr;` 与 `proxy_set_header X-Forwarded-For $remote_addr;`，强制剥离客户端伪造的 `X-Forwarded-For`。
    - Node.js 核心网关仅信任由本地反代（127.0.0.1）注入的 `X-Real-IP`，杜绝任何直连伪造。
    - **彻底摒弃裸 IP 鉴权**：全面禁用仅凭来源 IP 免密直登的后门机制，防范因公网 NAT、校园网/公司局域网共享公网出口、或云提供商动态回收 IP 带来的提权风险。所有后台管理操作必须由高强度口令换取加密会话 Token。
-2. **迁移接口 SSRF 拦截防御 (Anti-SSRF Protection)**：
-   - 在主控热迁移 `POST /api/admin/migration/pull` 接口中，内置严格的 URL 协议校验（仅限 HTTP/HTTPS）与异步 DNS 解析（`dns.lookup`）。
-   - 彻底封禁本地回环（`127.0.0.0/8`）、RFC 1918 私有内网网段（`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`）及云厂商元数据地址（`169.254.169.254`），坚决防范内部局域网探测或云服务器元数据泄露。
+2. **迁移接口 SSRF 与 DNS Rebinding 免疫防御 (Anti-SSRF & DNS Rebinding Immunity)**：
+   - 在主控热迁移 POST /api/admin/migration/pull 接口中，内置严格的 URL 协议校验（仅限 HTTP/HTTPS）与异步 DNS 解析（dns.lookup）。
+   - 彻底封禁本地回环（127.0.0.0/8）、RFC 1918 私有内网网段（10.0.0.0/8、172.16.0.0/12、192.168.0.0/16）及云厂商元数据地址（169.254.169.254）。
+   - **Socket 级 IP 固化防御 TOCTOU DNS Rebinding**：针对极短 TTL 的 DNS 重绑定攻击，系统在初次 DNS 校验合法后，将经检验的公网 IP 直接固化到底层 Socket 连接参数（
+eqOptions.hostname = pinnedIp），仅将原始域名注入 Host 请求头与 TLS SNI，杜绝发起二次请求时域名解析被篡改至私网回环的 TOCTOU 安全漏洞。
 3. **探针端高危动作密码学加锁 (HMAC-SHA256 Action Signature)**：
    - 子探针接收 `migrate`（切换主控汇报地址）与 `uninstall`（远程卸载清理）等敏感动作前，必须验证由主控基于该节点静态私钥 `NodeSecret` 签发的 `HMAC-SHA256` 签名。
    - 包含 Unix 秒级时间戳与防重放校验（`|当前时间 - 签发时间| <= 300 秒`）。任何非授权伪造主控或中间人篡改指令均会被子探针底层立即丢弃。

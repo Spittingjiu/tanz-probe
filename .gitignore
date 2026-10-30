@@ -9,6 +9,9 @@ npm-debug.log*
 *.pyc
 __pycache__/
 
+# Pre-compiled agent binaries (distributed via GitHub Actions Releases)
+public/tanz-agent*
+
 # Sensitive / volatile runtime data
 data/*.json
 !data/servers.example.json
@@ -22,3 +25,4 @@ data/*.json
 .env
 .DS_Store
 server.js.bak
+server.js.backup*

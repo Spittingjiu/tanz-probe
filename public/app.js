@@ -2103,17 +2103,34 @@ function openServerDetail(serverId) {
   const modal = document.getElementById('detailModal');
   if (!modal) return;
 
+  // Reset scroll position on opening so mobile bottom drawer and desktop modal always start from the top
+  modal.scrollTop = 0;
+  const dialog = document.getElementById('detailModalDialog');
+  if (dialog) dialog.scrollTop = 0;
+
   state.lastMetricsFetchTime = Date.now();
   updateServerDetailContent(serverId);
   setModalLoadRange(state.modalLoadRange || '1h');
   setModalLatencyRange(state.modalLatencyRange || '1h');
   modal.classList.remove('hidden');
+
+  // Enforce top scroll on next frame after dynamic content is populated
+  requestAnimationFrame(() => {
+    if (modal) modal.scrollTop = 0;
+    if (dialog) dialog.scrollTop = 0;
+  });
 }
 
 function closeServerDetail() {
   state.selectedServerId = null;
   const modal = document.getElementById('detailModal');
-  if (modal) modal.classList.add('hidden');
+  if (modal) {
+    modal.classList.add('hidden');
+    modal.scrollTop = 0;
+  }
+  const dialog = document.getElementById('detailModalDialog');
+  if (dialog) dialog.scrollTop = 0;
+
   if (state.modalLatencyChart) {
     try { state.modalLatencyChart.destroy(); } catch (e) {}
     state.modalLatencyChart = null;

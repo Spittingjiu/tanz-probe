@@ -1,0 +1,83 @@
+name: Build & Release Multi-Arch Tanz Agent
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Agent Binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            output: tanz-agent-linux-amd64
+          - os: linux
+            arch: arm64
+            output: tanz-agent-linux-arm64
+          - os: linux
+            arch: arm
+            arm_version: 7
+            output: tanz-agent-linux-armv7
+          - os: darwin
+            arch: amd64
+            output: tanz-agent-darwin-amd64
+          - os: darwin
+            arch: arm64
+            output: tanz-agent-darwin-arm64
+          - os: windows
+            arch: amd64
+            output: tanz-agent-windows-amd64.exe
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          check-latest: true
+
+      - name: Compile Agent Binary
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          GOARM: ${{ matrix.arm_version }}
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p build
+          go build -ldflags="-s -w" -trimpath -o build/${{ matrix.output }} agent.go
+          if [ "${{ matrix.os }}" = "linux" ] && [ "${{ matrix.arch }}" = "amd64" ]; then
+            cp build/${{ matrix.output }} build/tanz-agent
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output }}
+          path: build/${{ matrix.output }}
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/**/*
+          generate_release_notes: true

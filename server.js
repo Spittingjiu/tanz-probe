@@ -1849,27 +1849,88 @@ async function validateSafePublicMigrationUrl(inputUrl) {
   }
 
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error('仅允许 HTTP 或 HTTPS 协议');
+    throw new Error('仅支持 HTTP 与 HTTPS 协议');
   }
 
   const hostname = parsed.hostname.toLowerCase();
   if (!hostname || hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
-    throw new Error('安全防御拦截 (SSRF): 严禁将迁移目标指向本地回环地址 (localhost / 127.0.0.1)');
+    throw new Error('非法目标地址 (SSRF): 严禁对本地回环地址发起请求 (localhost / 127.0.0.1)');
   }
 
   // Resolve DNS to verify all destination IPs
   const addresses = await dns.lookup(hostname, { all: true });
   if (!addresses || addresses.length === 0) {
-    throw new Error(`无法解析迁移目标域名: ${hostname}`);
+    throw new Error(`无法解析目标主机域名: ${hostname}`);
   }
 
   for (const item of addresses) {
     if (isPrivateOrReservedIp(item.address)) {
-      throw new Error(`安全防御拦截 (SSRF): 目标地址 [${hostname}] 解析为内网私有或保留 IP [${item.address}]，已被系统安全层强制拦截！`);
+      throw new Error(`非法目标地址 (SSRF): 目标域名 [${hostname}] 解析到私有/保留网段 IP [${item.address}]，已被安全网关拦截`);
     }
   }
 
-  return parsed.origin;
+  // Return parsed URL and PINNED validated public IP to guarantee complete immunity against DNS Rebinding TOCTOU attacks
+  return {
+    parsed,
+    pinnedIp: addresses[0].address
+  };
+}
+
+// Low-level HTTP/HTTPS Request with Socket IP Pinning (Immune to DNS Rebinding)
+function safeRequestPinnedJson(validatedTarget, subPath, options = {}) {
+  return new Promise((resolve, reject) => {
+    try {
+      const { parsed, pinnedIp } = validatedTarget;
+      const isHttps = parsed.protocol === 'https:';
+      const client = isHttps ? https : http;
+      const port = parsed.port || (isHttps ? 443 : 80);
+
+      const reqOptions = {
+        hostname: pinnedIp, // Direct socket connection to the pre-validated public IP
+        port: port,
+        path: subPath,
+        method: options.method || 'GET',
+        headers: {
+          ...(options.headers || {}),
+          'Host': parsed.host // Preserve virtual host for Reverse Proxies / CDN
+        },
+        timeout: options.timeout || 10000
+      };
+
+      if (isHttps) {
+        reqOptions.servername = parsed.hostname; // SNI
+      }
+
+      const req = client.request(reqOptions, (res) => {
+        let body = '';
+        res.on('data', chunk => body += chunk);
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, data });
+          } catch (e) {
+            resolve({ ok: false, status: res.statusCode, data: { ok: false, error: body.slice(0, 150) } });
+          }
+        });
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('目标拉取请求超时 (Timeout 10s)'));
+      });
+
+      req.on('error', (err) => {
+        reject(err);
+      });
+
+      if (options.body) {
+        req.write(typeof options.body === 'string' ? options.body : JSON.stringify(options.body));
+      }
+      req.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
 }
 
 app.post('/api/admin/migration/initiate', requireAdmin, (req, res) => {
@@ -1981,27 +2042,27 @@ app.post('/api/admin/migration/pull', requireAdmin, async (req, res) => {
   cleanSource = cleanSource.replace(/\/+$/, '');
 
   // SSRF Security Verification
+  let validatedTarget;
   try {
-    await validateSafePublicMigrationUrl(cleanSource);
+    validatedTarget = await validateSafePublicMigrationUrl(cleanSource);
   } catch (ssrfErr) {
     console.warn(`🚨 [SSRF Intercepted] Blocked migration pull from unsafe host: ${cleanSource} - ${ssrfErr.message}`);
     return res.status(400).json({ ok: false, error: ssrfErr.message });
   }
 
   try {
-    const exportUrl = `${cleanSource}/api/migration/export`;
-    console.log(`📥 [Migration Pull] Fetching data from: ${exportUrl}`);
+    console.log(`📡 [Migration Pull] Fetching data via pinned IP [${validatedTarget.pinnedIp}] for host [${validatedTarget.parsed.hostname}]`);
 
-    const fetchRes = await fetch(exportUrl, {
+    const exportRes = await safeRequestPinnedJson(validatedTarget, '/api/migration/export', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Migration-Token': migrationToken
       },
-      body: JSON.stringify({ token: migrationToken })
+      body: { token: migrationToken }
     });
 
-    const exportData = await fetchRes.json();
+    const exportData = exportRes.data;
     if (!exportData.ok || !exportData.package) {
       return res.status(400).json({ ok: false, error: exportData.error || '从旧面板拉取数据失败' });
     }
@@ -2033,13 +2094,13 @@ app.post('/api/admin/migration/pull', requireAdmin, async (req, res) => {
     }
 
     try {
-      await fetch(`${cleanSource}/api/migration/confirm`, {
+      await safeRequestPinnedJson(validatedTarget, '/api/migration/confirm', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Migration-Token': migrationToken
         },
-        body: JSON.stringify({ token: migrationToken })
+        body: { token: migrationToken }
       });
     } catch (confirmErr) {
       console.warn('Notice to source confirm failed, but local data imported:', confirmErr.message);
