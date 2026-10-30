@@ -901,19 +901,21 @@
               </div>
             </div>
 
-            <!-- Clean Cumulative Network Traffic (只保留累计总流量) -->
+            <!-- Lifetime Cumulative & Boot Traffic -->
             <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between text-xs">
               <div class="flex items-center space-x-2">
-                <div class="w-6 h-6 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shrink-0">
-                  <i data-lucide="arrow-down-up" class="w-3.5 h-3.5"></i>
+                <div class="w-8 h-8 rounded-xl bg-purple-50 border border-purple-100 flex items-center justify-center text-purple-600 shrink-0">
+                  <i data-lucide="activity" class="w-4 h-4"></i>
                 </div>
                 <div>
-                  <div class="font-bold text-slate-800 text-xs">累计网络总流量</div>
-                  <div class="text-[10px] text-slate-400 font-mono">节点启动以来的总计吞吐</div>
+                  <div class="font-bold text-slate-800 text-xs">总计累计流量</div>
+                  <div class="text-[10px] text-slate-400 font-mono">面板纳管以来总吞吐</div>
                 </div>
               </div>
-              <div class="text-right font-mono text-xs font-bold text-slate-800" id="modalTotalTraffic">
-                --
+              <div class="text-right font-mono leading-tight">
+                <div class="text-xs font-bold text-slate-900" id="modalLifetimeTraffic">--</div>
+                <div class="text-[10.5px] text-slate-500 font-medium" id="modalBootTraffic">启动: --</div>
+                <div class="hidden" id="modalTotalTraffic">--</div>
               </div>
             </div>
 

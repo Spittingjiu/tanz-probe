@@ -50,6 +50,15 @@ try {
   trafficState = {};
 }
 
+// Auto-migrate: ensure lifetimeAccumulatedBytes exists for all tracked nodes
+for (const [id, ts] of Object.entries(trafficState)) {
+  if (ts && typeof ts.lifetimeAccumulatedBytes !== 'number') {
+    ts.lifetimeAccumulatedBytes = typeof ts.cycleAccumulatedBytes === 'number'
+      ? ts.cycleAccumulatedBytes
+      : (typeof ts.lastRaw === 'number' ? ts.lastRaw : 0);
+  }
+}
+
 let trafficSaveTimer = null;
 function saveTrafficState() {
   if (trafficSaveTimer) return;
@@ -123,14 +132,27 @@ function calculateTrafficStats(s, t) {
 
   let ts = trafficState[s.id];
   let usedBytes = 0;
+  let lifetimeBytes = 0;
 
-  if (ts && ts.cycleId === cycle.cycleId && typeof ts.cycleAccumulatedBytes === 'number') {
-    usedBytes = ts.cycleAccumulatedBytes;
+  if (ts) {
+    if (ts.cycleId === cycle.cycleId && typeof ts.cycleAccumulatedBytes === 'number') {
+      usedBytes = ts.cycleAccumulatedBytes;
+    } else {
+      usedBytes = rawTotal;
+    }
+    lifetimeBytes = typeof ts.lifetimeAccumulatedBytes === 'number'
+      ? ts.lifetimeAccumulatedBytes
+      : Math.max(usedBytes, rawTotal);
   } else {
     usedBytes = rawTotal;
+    lifetimeBytes = rawTotal;
   }
 
   const usedGB = +(usedBytes / (1024 * 1024 * 1024)).toFixed(2);
+  const lifetimeGB = +(lifetimeBytes / (1024 * 1024 * 1024)).toFixed(2);
+  const bootBytes = rawTotal;
+  const bootGB = +(bootBytes / (1024 * 1024 * 1024)).toFixed(2);
+
   const limitBytes = limitGB * 1024 * 1024 * 1024;
   const percent = limitGB > 0 ? Math.min(100, +((usedBytes / limitBytes) * 100).toFixed(1)) : 0;
   const remainingGB = limitGB > 0 ? Math.max(0, +(limitGB - usedGB).toFixed(2)) : 0;
@@ -168,7 +190,11 @@ function calculateTrafficStats(s, t) {
     percent,
     status,
     color,
-    label
+    label,
+    lifetimeBytes,
+    lifetimeGB,
+    bootBytes,
+    bootGB
   };
 }
 
@@ -924,6 +950,14 @@ function getGlobalStats() {
     updateHistoricalPeak(totalNetRxSpeed, totalNetTxSpeed);
   }
 
+  let totalLifetimeBytes = 0;
+  for (const s of serverRegistry) {
+    const ts = trafficState[s.id];
+    if (ts) {
+      totalLifetimeBytes += (typeof ts.lifetimeAccumulatedBytes === 'number' ? ts.lifetimeAccumulatedBytes : (ts.cycleAccumulatedBytes || 0));
+    }
+  }
+
   return {
     totalServers,
     onlineServers,
@@ -939,6 +973,7 @@ function getGlobalStats() {
     totalNetTxSpeed,
     totalNetRxBytes,
     totalNetTxBytes,
+    totalLifetimeBytes,
     historicalPeak,
     avgCpu
   };
@@ -2242,27 +2277,60 @@ app.post('/api/report', (req, res) => {
     const cycle = getCycleInfo(serverConfig.trafficResetDay || 1);
     let ts = trafficState[nodeId];
 
-    if (!ts || ts.cycleId !== cycle.cycleId) {
-      // First time or new cycle started
+    if (!ts) {
+      // First time this node has ever reported
       ts = {
         cycleId: cycle.cycleId,
-        cycleAccumulatedBytes: ts ? 0 : rawTotal,
+        cycleAccumulatedBytes: rawTotal,
+        lifetimeAccumulatedBytes: rawTotal,
         lastRaw: rawTotal,
         lastAlertLevel: 0,
         lastAlertTime: 0
       };
       trafficState[nodeId] = ts;
       saveTrafficState();
+    } else if (ts.cycleId !== cycle.cycleId) {
+      // New billing month cycle started!
+      // Month resets, but LIFETIME ACCUMULATED BYTES NEVER RESETS!
+      let delta = 0;
+      if (typeof ts.lastRaw === 'number') {
+        delta = rawTotal >= ts.lastRaw ? (rawTotal - ts.lastRaw) : rawTotal;
+      } else {
+        delta = rawTotal;
+      }
+
+      const prevLifetime = typeof ts.lifetimeAccumulatedBytes === 'number'
+        ? ts.lifetimeAccumulatedBytes
+        : (ts.cycleAccumulatedBytes || rawTotal);
+
+      ts.cycleId = cycle.cycleId;
+      ts.cycleAccumulatedBytes = delta;
+      ts.lifetimeAccumulatedBytes = prevLifetime + delta;
+      ts.lastRaw = rawTotal;
+      ts.lastAlertLevel = 0;
+      saveTrafficState();
     } else {
+      // Ongoing update in current cycle
+      let delta = 0;
       if (typeof ts.lastRaw === 'number') {
         if (rawTotal >= ts.lastRaw) {
-          const delta = rawTotal - ts.lastRaw;
-          ts.cycleAccumulatedBytes = (ts.cycleAccumulatedBytes || 0) + delta;
+          delta = rawTotal - ts.lastRaw;
         } else {
-          // System rebooted: add current rawTotal
-          ts.cycleAccumulatedBytes = (ts.cycleAccumulatedBytes || 0) + rawTotal;
+          // Node system rebooted: rawTotal started from 0
+          delta = rawTotal;
         }
+      } else {
+        delta = rawTotal;
       }
+
+      ts.cycleAccumulatedBytes = (ts.cycleAccumulatedBytes || 0) + delta;
+
+      if (typeof ts.lifetimeAccumulatedBytes !== 'number') {
+        ts.lifetimeAccumulatedBytes = ts.cycleAccumulatedBytes;
+      } else {
+        ts.lifetimeAccumulatedBytes += delta;
+      }
+
       ts.lastRaw = rawTotal;
       saveTrafficState();
     }
@@ -3318,10 +3386,12 @@ app.post('/api/admin/servers/:id/reset-traffic', requireAdmin, (req, res) => {
   const s = serverRegistry.find(x => x.id === id);
   if (!s) return res.status(404).json({ error: 'Server not found' });
   const cycle = getCycleInfo(s.trafficResetDay || 1);
+  const currentLifetime = trafficState[id]?.lifetimeAccumulatedBytes || 0;
   trafficState[id] = {
     cycleId: cycle.cycleId,
     cycleAccumulatedBytes: 0,
-    lastRaw: 0,
+    lifetimeAccumulatedBytes: currentLifetime, // Preserve lifetime total!
+    lastRaw: trafficState[id]?.lastRaw || 0,
     lastAlertLevel: 0,
     lastAlertTime: 0
   };

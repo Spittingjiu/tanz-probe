@@ -1321,7 +1321,10 @@ function updateSingleCardInPlace(card, s) {
   const txSpeed = isOnline ? (m.net_tx_speed || 0) : 0;
   const rxTotal = isOnline ? (m.net_rx_total || 0) : 0;
   const txTotal = isOnline ? (m.net_tx_total || 0) : 0;
-  const totalTraffic = rxTotal + txTotal;
+  const bootTraffic = rxTotal + txTotal;
+  const tr = s.traffic || {};
+  const lifetimeTraffic = (tr.lifetimeBytes !== undefined) ? tr.lifetimeBytes : bootTraffic;
+  const totalTraffic = lifetimeTraffic;
 
   const uptimeStr = isOnline ? formatUptime(m.uptime || (inf.boot_time ? (Date.now()/1000 - inf.boot_time) : 0)) : '离线';
 
@@ -1398,12 +1401,14 @@ function updateSingleCardInPlace(card, s) {
   if (rxEl) rxEl.textContent = `↓ ${formatSpeed(rxSpeed)}`;
   const txEl = card.querySelector('.card-tx-speed');
   if (txEl) txEl.textContent = `↑ ${formatSpeed(txSpeed)}`;
-  const totalValEl = card.querySelector('.card-total-traffic-val');
-  if (totalValEl) {
-    totalValEl.textContent = formatBytes(totalTraffic, 1);
-  } else {
-    const totalEl = card.querySelector('.card-total-traffic');
-    if (totalEl) totalEl.innerHTML = `总流量 <span class="card-total-traffic-val font-bold text-slate-900 sm:text-[14px]">${formatBytes(totalTraffic, 1)}</span>`;
+
+  const lifetimeValEl = card.querySelector('.card-lifetime-traffic-val') || card.querySelector('.card-total-traffic-val');
+  if (lifetimeValEl) {
+    lifetimeValEl.textContent = formatBytes(lifetimeTraffic, 1);
+  }
+  const bootValEl = card.querySelector('.card-boot-traffic-val');
+  if (bootValEl) {
+    bootValEl.textContent = formatBytes(bootTraffic, 1);
   }
 }
 
@@ -1510,7 +1515,10 @@ function buildServerCardHtml(s) {
   const txSpeed = isOnline ? (m.net_tx_speed || 0) : 0;
   const rxTotal = isOnline ? (m.net_rx_total || 0) : 0;
   const txTotal = isOnline ? (m.net_tx_total || 0) : 0;
-  const totalTraffic = rxTotal + txTotal;
+  const bootTraffic = rxTotal + txTotal;
+  const tr = s.traffic || {};
+  const lifetimeTraffic = (tr.lifetimeBytes !== undefined) ? tr.lifetimeBytes : bootTraffic;
+  const totalTraffic = lifetimeTraffic;
 
   const uptimeStr = isOnline ? formatUptime(m.uptime || (inf.boot_time ? (Date.now()/1000 - inf.boot_time) : 0)) : '离线';
 
@@ -1665,8 +1673,13 @@ function buildServerCardHtml(s) {
           <span class="card-rx-speed font-mono text-emerald-600 font-semibold tabular-nums inline-block min-w-[82px]">↓ ${formatSpeed(rxSpeed)}</span>
           <span class="card-tx-speed font-mono text-indigo-600 font-semibold tabular-nums inline-block min-w-[82px]">↑ ${formatSpeed(txSpeed)}</span>
         </div>
-        <div class="card-total-traffic font-mono text-xs sm:text-[13px] text-slate-600 font-medium tabular-nums tracking-tight">
-          总流量 <span class="card-total-traffic-val font-bold text-slate-900 sm:text-[14px]">${formatBytes(totalTraffic, 1)}</span>
+        <div class="card-total-traffic text-right font-mono tracking-tight leading-tight shrink-0">
+          <div class="text-xs sm:text-[13px] text-slate-700 font-medium">
+            总计 <span class="card-lifetime-traffic-val card-total-traffic-val font-bold text-slate-900 sm:text-[14px]">${formatBytes(lifetimeTraffic, 1)}</span>
+          </div>
+          <div class="text-[10px] text-slate-400 font-normal">
+            启动 <span class="card-boot-traffic-val">${formatBytes(bootTraffic, 1)}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -1757,9 +1770,12 @@ function renderTable(servers) {
             const tr = s.traffic || {};
             const limitGB = Number(s.trafficLimitGB) || 0;
             if (!limitGB) {
-              return '<span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200 inline-block mb-1">不限流量</span>';
+              return lifetimeStr + '<div class="mt-1"><span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200 inline-block">不限流量</span></div>';
             }
-            const usedGB = tr.usedGB !== undefined ? tr.usedGB : +((rxTotal + txTotal) / (1024 * 1024 * 1024)).toFixed(1);
+            const lifetimeBytes = (tr.lifetimeBytes !== undefined) ? tr.lifetimeBytes : (rxTotal + txTotal);
+            const bootBytes = rxTotal + txTotal;
+            const lifetimeStr = `<div>总计 <b class="text-slate-900 font-bold">${formatBytes(lifetimeBytes, 1)}</b></div><div class="text-[10px] text-slate-400">启动: ${formatBytes(bootBytes, 1)}</div>`;
+            const usedGB = tr.usedGB !== undefined ? tr.usedGB : +(lifetimeBytes / (1024 * 1024 * 1024)).toFixed(1);
             const pct = tr.percent !== undefined ? tr.percent : Math.min(100, Math.round((usedGB / limitGB) * 100));
             const isWarn = pct >= (s.trafficAlertPercent || 80);
             const isMod = pct >= 60;
@@ -2341,9 +2357,21 @@ function updateServerDetailContent(serverId) {
     }
   }
 
+  const nodeTr = s.traffic || {};
+  const lifetimeTraffic = (nodeTr.lifetimeBytes !== undefined) ? nodeTr.lifetimeBytes : ((m.net_rx_total || 0) + (m.net_tx_total || 0));
+  const bootRx = m.net_rx_total || 0;
+  const bootTx = m.net_tx_total || 0;
+  const bootTotal = bootRx + bootTx;
+
+  const ltEl = document.getElementById('modalLifetimeTraffic');
+  if (ltEl) ltEl.innerText = formatBytes(lifetimeTraffic, 1);
+
+  const btEl = document.getElementById('modalBootTraffic');
+  if (btEl) btEl.innerText = `启动以来: ↓ ${formatBytes(bootRx, 1)} · ↑ ${formatBytes(bootTx, 1)} (${formatBytes(bootTotal, 1)})`;
+
   const totalTrafficEl = document.getElementById('modalTotalTraffic');
   if (totalTrafficEl) {
-    totalTrafficEl.innerText = `↓ ${formatBytes(m.net_rx_total || 0, 1)} / ↑ ${formatBytes(m.net_tx_total || 0, 1)}`;
+    totalTrafficEl.innerText = `总计: ${formatBytes(lifetimeTraffic, 1)} · 启动: ${formatBytes(bootTotal, 1)}`;
   }
 
   // Render Streaming & AI Unlocks
