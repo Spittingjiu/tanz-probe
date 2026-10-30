@@ -50,15 +50,15 @@ try {
   trafficState = {};
 }
 
-// Auto-migrate: ensure lifetimeAccumulatedBytes exists for all tracked nodes
+// Auto-migrate & sanitize: lifetimeAccumulatedBytes represents lifetime cumulative traffic and MUST be at least Math.max(lastRaw, cycleAccumulatedBytes)
 for (const [id, ts] of Object.entries(trafficState)) {
-  if (ts && typeof ts.lifetimeAccumulatedBytes !== 'number') {
-    ts.lifetimeAccumulatedBytes = typeof ts.cycleAccumulatedBytes === 'number'
-      ? ts.cycleAccumulatedBytes
-      : (typeof ts.lastRaw === 'number' ? ts.lastRaw : 0);
+  if (ts) {
+    const raw = Number(ts.lastRaw) || 0;
+    const cycle = Number(ts.cycleAccumulatedBytes) || 0;
+    const current = Number(ts.lifetimeAccumulatedBytes) || 0;
+    ts.lifetimeAccumulatedBytes = Math.max(current, raw, cycle);
   }
 }
-
 let trafficSaveTimer = null;
 function saveTrafficState() {
   if (trafficSaveTimer) return;
@@ -141,7 +141,7 @@ function calculateTrafficStats(s, t) {
       usedBytes = rawTotal;
     }
     lifetimeBytes = typeof ts.lifetimeAccumulatedBytes === 'number'
-      ? ts.lifetimeAccumulatedBytes
+      ? Math.max(ts.lifetimeAccumulatedBytes, rawTotal)
       : Math.max(usedBytes, rawTotal);
   } else {
     usedBytes = rawTotal;
@@ -2329,6 +2329,9 @@ app.post('/api/report', (req, res) => {
         ts.lifetimeAccumulatedBytes = ts.cycleAccumulatedBytes;
       } else {
         ts.lifetimeAccumulatedBytes += delta;
+      if (ts.lifetimeAccumulatedBytes < rawTotal) {
+        ts.lifetimeAccumulatedBytes = rawTotal;
+      }
       }
 
       ts.lastRaw = rawTotal;

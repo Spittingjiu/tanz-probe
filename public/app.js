@@ -1323,7 +1323,7 @@ function updateSingleCardInPlace(card, s) {
   const txTotal = isOnline ? (m.net_tx_total || 0) : 0;
   const bootTraffic = rxTotal + txTotal;
   const tr = s.traffic || {};
-  const lifetimeTraffic = (tr.lifetimeBytes !== undefined) ? tr.lifetimeBytes : bootTraffic;
+  const lifetimeTraffic = Math.max((tr.lifetimeBytes !== undefined) ? tr.lifetimeBytes : bootTraffic, bootTraffic);
   const totalTraffic = lifetimeTraffic;
 
   const uptimeStr = isOnline ? formatUptime(m.uptime || (inf.boot_time ? (Date.now()/1000 - inf.boot_time) : 0)) : '离线';
@@ -1517,7 +1517,7 @@ function buildServerCardHtml(s) {
   const txTotal = isOnline ? (m.net_tx_total || 0) : 0;
   const bootTraffic = rxTotal + txTotal;
   const tr = s.traffic || {};
-  const lifetimeTraffic = (tr.lifetimeBytes !== undefined) ? tr.lifetimeBytes : bootTraffic;
+  const lifetimeTraffic = Math.max((tr.lifetimeBytes !== undefined) ? tr.lifetimeBytes : bootTraffic, bootTraffic);
   const totalTraffic = lifetimeTraffic;
 
   const uptimeStr = isOnline ? formatUptime(m.uptime || (inf.boot_time ? (Date.now()/1000 - inf.boot_time) : 0)) : '离线';
@@ -1773,7 +1773,7 @@ function renderTable(servers) {
             if (!limitGB) {
               return lifetimeStr + '<div class="mt-1"><span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200 inline-block">不限流量</span></div>';
             }
-            const lifetimeBytes = (tr.lifetimeBytes !== undefined) ? tr.lifetimeBytes : (rxTotal + txTotal);
+            const lifetimeBytes = Math.max((tr.lifetimeBytes !== undefined) ? tr.lifetimeBytes : (rxTotal + txTotal), (rxTotal + txTotal));
             const bootBytes = rxTotal + txTotal;
             const lifetimeStr = `<div>总计 <b class="text-slate-900 font-bold">${formatBytes(lifetimeBytes, 1)}</b></div><div class="text-[10px] text-slate-400">启动: ${formatBytes(bootBytes, 1)}</div>`;
             const usedGB = tr.usedGB !== undefined ? tr.usedGB : +(lifetimeBytes / (1024 * 1024 * 1024)).toFixed(1);
@@ -2359,7 +2359,7 @@ function updateServerDetailContent(serverId) {
   }
 
   const nodeTr = s.traffic || {};
-  const lifetimeTraffic = (nodeTr.lifetimeBytes !== undefined) ? nodeTr.lifetimeBytes : ((m.net_rx_total || 0) + (m.net_tx_total || 0));
+  const lifetimeTraffic = Math.max((nodeTr.lifetimeBytes !== undefined) ? nodeTr.lifetimeBytes : bootTotal, bootTotal);
   const bootRx = m.net_rx_total || 0;
   const bootTx = m.net_tx_total || 0;
   const bootTotal = bootRx + bootTx;
