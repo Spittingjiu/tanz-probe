@@ -2555,6 +2555,46 @@ function isInstalledAgentIp(clientIp) {
 const loginAttempts = new Map();
 
 // Map: sessionToken -> { createdAt: number, expiresAt: number, ip: string, lastActive: number }
+// =====================================================================
+// Trusted Devices & Dual-Key IP Mutual Authentication Engine
+// =====================================================================
+const TRUSTED_DEVICES_FILE = path.join(DATA_DIR, 'trusted_devices.json');
+let trustedDevices = [];
+
+function loadTrustedDevices() {
+  try {
+    if (fs.existsSync(TRUSTED_DEVICES_FILE)) {
+      const data = JSON.parse(fs.readFileSync(TRUSTED_DEVICES_FILE, 'utf8'));
+      if (Array.isArray(data)) {
+        trustedDevices = data;
+      }
+    }
+  } catch (e) {
+    console.error('Error reading trusted_devices.json:', e);
+    trustedDevices = [];
+  }
+}
+loadTrustedDevices();
+
+function saveTrustedDevices() {
+  try {
+    fs.writeFileSync(TRUSTED_DEVICES_FILE, JSON.stringify(trustedDevices, null, 2));
+  } catch (e) {
+    console.error('Error saving trusted_devices.json:', e);
+  }
+}
+
+function parseDeviceName(ua) {
+  if (!ua) return '通用终端';
+  if (/Windows/i.test(ua)) return 'Windows PC';
+  if (/Macintosh|Mac OS/i.test(ua)) return 'Mac 电脑';
+  if (/iPhone/i.test(ua)) return 'iPhone 手机';
+  if (/iPad/i.test(ua)) return 'iPad 平板';
+  if (/Android/i.test(ua)) return 'Android 设备';
+  if (/Linux/i.test(ua)) return 'Linux 终端';
+  return '受信任浏览器终端';
+}
+
 const activeSessions = new Map();
 
 const MAX_LOGIN_ATTEMPTS = 5;               // 5 consecutive failed attempts
@@ -2608,15 +2648,15 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Check auth status & Auto-login for agent node IPs
+// Check auth status & Dual-Key IP + Device Token Authentication
 app.get('/api/admin/auth-status', (req, res) => {
-  // Strictly read from x-admin-token request header only
   const token = req.headers['x-admin-token'];
+  const deviceToken = req.headers['x-device-token'];
   const ip = getClientIp(req);
   const now = Date.now();
   const isAgent = isInstalledAgentIp(ip);
 
-  // 1. Existing token validation
+  // 1. Existing active session validation
   if (token) {
     const session = activeSessions.get(token);
     if (session && now < session.expiresAt) {
@@ -2642,7 +2682,58 @@ app.get('/api/admin/auth-status', (req, res) => {
     }
   }
 
-  // Strict Security: Bare IP auto-login is completely removed to prevent NAT/proxy privilege escalation.
+  // 2. Dual-Key Authentication (Trusted IP + Bound Cryptographic Device Secret)
+  if (deviceToken && typeof deviceToken === 'string' && deviceToken.startsWith('sec_dev_')) {
+    const device = trustedDevices.find(d => d.deviceToken === deviceToken);
+    if (device && now < (device.expiresAt || Infinity)) {
+      if (device.boundIp === ip) {
+        device.lastUsedAt = now;
+        saveTrustedDevices();
+
+        const sessionToken = 'tok_dev_' + crypto.randomBytes(24).toString('hex');
+        activeSessions.set(sessionToken, {
+          ip,
+          createdAt: now,
+          expiresAt: now + SESSION_TTL_MS,
+          lastActive: now,
+          autoByDeviceToken: true,
+          deviceId: device.id
+        });
+
+        addAuditLog('auth', `🟢 信任设备与 IP 双重鉴权成功: ${device.name} @ ${ip}`);
+
+        return res.json({
+          ok: true,
+          authenticated: true,
+          autoLogin: true,
+          token: sessionToken,
+          clientIp: ip,
+          isAgentIp: isAgent,
+          deviceId: device.id,
+          deviceName: device.name,
+          boundIp: device.boundIp,
+          mode: 'device_ip_dual_key',
+          message: `已通过 [受信任 IP: ${ip} + 终端指纹: ${device.name}] 双重校验，免密安全登录`
+        });
+      } else {
+        // Device token presented, but IP mismatch!
+        return res.json({
+          ok: true,
+          authenticated: false,
+          clientIp: ip,
+          isAgentIp: isAgent,
+          deviceBoundMismatch: true,
+          ipMismatch: true,
+          currentIp: ip,
+          boundIp: device.boundIp,
+          deviceName: device.name,
+          message: `已绑定设备，但检测到当前 IP [${ip}] 与授权 IP [${device.boundIp}] 不匹配，请使用密码登录`
+        });
+      }
+    }
+  }
+
+  // 3. Not authenticated
   return res.json({
     ok: true,
     authenticated: false,
@@ -2697,16 +2788,56 @@ app.post('/api/admin/login', async (req, res) => {
 
     addAuditLog('auth', `管理员成功登录管理后台 (IP: ${ip})`);
 
+    // Dual-Key Device Binding if requested by client
+    let newDeviceToken = null;
+    let boundDeviceId = null;
+    if (req.body.rememberDevice) {
+      const userAgent = req.headers['user-agent'] || '未知客户端';
+      const devName = (req.body.deviceName && typeof req.body.deviceName === 'string' && req.body.deviceName.trim())
+        ? req.body.deviceName.trim().slice(0, 50)
+        : parseDeviceName(userAgent);
+
+      newDeviceToken = 'sec_dev_' + crypto.randomBytes(32).toString('hex');
+      boundDeviceId = 'dev_' + crypto.randomBytes(8).toString('hex');
+
+      // Keep max 20 trusted devices
+      if (trustedDevices.length >= 20) {
+        trustedDevices.sort((a, b) => (a.lastUsedAt || a.createdAt) - (b.lastUsedAt || b.createdAt));
+        trustedDevices.shift();
+      }
+
+      trustedDevices.push({
+        id: boundDeviceId,
+        deviceToken: newDeviceToken,
+        boundIp: ip,
+        name: devName,
+        userAgent: userAgent.slice(0, 150),
+        createdAt: now,
+        lastUsedAt: now,
+        expiresAt: now + (180 * 24 * 3600 * 1000) // 180 days
+      });
+      saveTrustedDevices();
+
+      addAuditLog('auth', `🔑 信任设备绑定成功: [${devName}] 绑定至当前 IP [${ip}]`);
+    }
+
     // Send Telegram Notification on Successful Login
     sendNotification(
       '🛡️ 后台管理员登录成功',
       `<b>检测到管理后台登录事件</b>\n\n` +
       `• <b>登录 IP:</b> <code>${ip}</code>\n` +
-      `• <b>客户端:</b> <code>${(req.headers['user-agent'] || '未知客户端').slice(0, 100)}</code>`,
+      `• <b>客户端:</b> <code>${(req.headers['user-agent'] || '未知客户端').slice(0, 100)}</code>` +
+      (req.body.rememberDevice ? `\n• <b>信任终端:</b> 已绑定此设备与 IP` : ''),
       'info'
     ).catch(() => {});
 
-    return res.json({ ok: true, token: sessionToken });
+    return res.json({
+      ok: true,
+      token: sessionToken,
+      deviceToken: newDeviceToken,
+      deviceId: boundDeviceId,
+      boundIp: ip
+    });
   } else {
     // Password incorrect -> increment counter
     record.attempts += 1;
@@ -2749,6 +2880,106 @@ app.post('/api/admin/login', async (req, res) => {
 });
 
 // Security Gateway Status & IP Unlock APIs
+// Trusted Devices Management APIs (Dual-Key Auth)
+app.get('/api/admin/trusted-devices', requireAdmin, (req, res) => {
+  const clientIp = getClientIp(req);
+  const currentDevToken = req.headers['x-device-token'];
+  const list = trustedDevices.map(d => ({
+    id: d.id,
+    name: d.name,
+    boundIp: d.boundIp,
+    isCurrentIp: d.boundIp === clientIp,
+    isCurrentDevice: Boolean(currentDevToken && d.deviceToken === currentDevToken),
+    createdAt: d.createdAt,
+    lastUsedAt: d.lastUsedAt,
+    expiresAt: d.expiresAt,
+    userAgent: d.userAgent
+  }));
+  res.json({ ok: true, devices: list, currentClientIp: clientIp });
+});
+
+app.post('/api/admin/trusted-devices/:id/revoke', requireAdmin, (req, res) => {
+  const { id } = req.params;
+  const idx = trustedDevices.findIndex(d => d.id === id);
+  if (idx !== -1) {
+    const removed = trustedDevices.splice(idx, 1)[0];
+    saveTrustedDevices();
+    for (const [sessTok, sess] of activeSessions.entries()) {
+      if (sess.deviceId === id) {
+        activeSessions.delete(sessTok);
+      }
+    }
+    addAuditLog('auth', `🗑️ 注销信任设备: ${removed.name} (绑定 IP: ${removed.boundIp})`);
+    return res.json({ ok: true, message: `已成功注销信任设备: ${removed.name}` });
+  }
+  res.status(404).json({ ok: false, error: '未找到指定设备' });
+});
+
+app.post('/api/admin/trusted-devices/clear-all', requireAdmin, (req, res) => {
+  const count = trustedDevices.length;
+  trustedDevices = [];
+  saveTrustedDevices();
+  addAuditLog('auth', `🗑️ 一键注销所有信任设备 (共 ${count} 台)`);
+  res.json({ ok: true, message: `已成功清除全部 ${count} 台信任设备` });
+});
+
+app.post('/api/admin/trusted-devices/bind-current', requireAdmin, (req, res) => {
+  const clientIp = getClientIp(req);
+  const currentDevToken = req.headers['x-device-token'] || req.body.deviceToken;
+  const userAgent = req.headers['user-agent'] || '未知客户端';
+  const now = Date.now();
+
+  let device = null;
+  if (currentDevToken) {
+    device = trustedDevices.find(d => d.deviceToken === currentDevToken);
+  }
+
+  let finalDeviceToken = currentDevToken;
+  if (device) {
+    const oldIp = device.boundIp;
+    device.boundIp = clientIp;
+    device.lastUsedAt = now;
+    saveTrustedDevices();
+    addAuditLog('auth', `🔄 信任设备 [${device.name}] 绑定 IP 更新: ${oldIp} -> ${clientIp}`);
+    return res.json({
+      ok: true,
+      deviceToken: device.deviceToken,
+      boundIp: clientIp,
+      message: `已将设备 [${device.name}] 成功更新绑定至当前 IP [${clientIp}]`
+    });
+  } else {
+    finalDeviceToken = 'sec_dev_' + crypto.randomBytes(32).toString('hex');
+    const devId = 'dev_' + crypto.randomBytes(8).toString('hex');
+    const devName = (req.body.deviceName && typeof req.body.deviceName === 'string' && req.body.deviceName.trim())
+      ? req.body.deviceName.trim().slice(0, 50)
+      : parseDeviceName(userAgent);
+
+    if (trustedDevices.length >= 20) {
+      trustedDevices.sort((a, b) => (a.lastUsedAt || a.createdAt) - (b.lastUsedAt || b.createdAt));
+      trustedDevices.shift();
+    }
+
+    trustedDevices.push({
+      id: devId,
+      deviceToken: finalDeviceToken,
+      boundIp: clientIp,
+      name: devName,
+      userAgent: userAgent.slice(0, 150),
+      createdAt: now,
+      lastUsedAt: now,
+      expiresAt: now + (180 * 24 * 3600 * 1000)
+    });
+    saveTrustedDevices();
+    addAuditLog('auth', `🔑 信任设备绑定成功: [${devName}] 绑定至当前 IP [${clientIp}]`);
+    return res.json({
+      ok: true,
+      deviceToken: finalDeviceToken,
+      boundIp: clientIp,
+      message: `已成功将当前终端 [${devName}] 绑定至当前 IP [${clientIp}]`
+    });
+  }
+});
+
 app.get('/api/admin/security/status', requireAdmin, (req, res) => {
   const now = Date.now();
   const lockedList = [];

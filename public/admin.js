@@ -280,7 +280,7 @@ function togglePasswordVisibility(inputId, iconId) {
     input.type = 'password';
     if (icon) icon.setAttribute('data-lucide', 'eye');
   }
-  lucide.createIcons();
+  if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
 }
 
 // ---------------------------------------------------------------------
@@ -295,31 +295,33 @@ async function checkAuth() {
     if (adminState.adminToken) {
       headers['x-admin-token'] = adminState.adminToken;
     }
+    const deviceToken = localStorage.getItem('tanz_trusted_device_token');
+    if (deviceToken) {
+      headers['x-device-token'] = deviceToken;
+    }
 
     const res = await fetch('/api/admin/auth-status', { headers });
     const data = await res.json();
     cachedAuthStatus = data;
 
-    // Case A: User has valid session or is accessing from an installed probe node IP!
+    // Case A: User has valid session or is authenticated via Dual-Key IP + Device Token!
     if (data.authenticated && data.token) {
       adminState.adminToken = data.token;
       localStorage.setItem('tanz_admin_token', data.token);
+      if (data.deviceToken) {
+        localStorage.setItem('tanz_trusted_device_token', data.deviceToken);
+      }
       showDashboardView();
       loadAdminData();
       if (data.autoLogin) {
-        showToast(`🟢 已识别探针节点来源 IP (${data.clientIp})，已免密自动登录后台`, 'success');
+        showToast(`🟢 硬件与受信任 IP 双因子验证通过 (${data.boundIp || data.clientIp})，已自动免密登录`, 'success');
       }
       return;
     }
 
-    // Case B: Not authenticated, but detected as installed agent IP
-    if (data.isAgentIp && data.clientIp) {
-      const bypassBox = document.getElementById('agentIpBypassBox');
-      const clientIpText = document.getElementById('agentClientIpText');
-      if (bypassBox && clientIpText) {
-        clientIpText.innerText = data.clientIp;
-        bypassBox.classList.remove('hidden');
-      }
+    // Case B: Device Token matched, but IP mismatched
+    if (data.ipMismatch) {
+      showToast(`⚠️ 检测到受信任设备，但当前 IP (${data.clientIp}) 与绑定 IP (${data.boundIp}) 不符，请密码登录以确保安全`, 'warning');
     }
   } catch (err) {
     console.error('Auth verification error:', err);
@@ -331,39 +333,26 @@ async function checkAuth() {
   showAuthView();
 }
 
-async function loginWithAgentBypass() {
-  try {
-    const res = await fetch('/api/admin/auth-status');
-    const data = await res.json();
-    if (data.authenticated && data.token) {
-      adminState.adminToken = data.token;
-      localStorage.setItem('tanz_admin_token', data.token);
-      showDashboardView();
-      loadAdminData();
-      showToast(`🟢 探针节点识别成功 (${data.clientIp})，已免密登录`, 'success');
-    } else {
-      showToast('免密验证未通过，请使用密码登录', 'error');
-    }
-  } catch (err) {
-    showToast('网络请求异常', 'error');
-  }
-}
-
 function showAuthView() {
-  document.getElementById('authView').classList.remove('hidden');
-  document.getElementById('dashboardView').classList.add('hidden');
-  lucide.createIcons();
+  const authEl = document.getElementById('authView');
+  const dashEl = document.getElementById('dashboardView');
+  if (authEl) { authEl.classList.remove('hidden'); authEl.style.display = 'flex'; }
+  if (dashEl) { dashEl.classList.add('hidden'); dashEl.style.display = 'none'; }
+  if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
 }
 
 function showDashboardView() {
-  document.getElementById('authView').classList.add('hidden');
-  document.getElementById('dashboardView').classList.remove('hidden');
-  lucide.createIcons();
+  const authEl = document.getElementById('authView');
+  const dashEl = document.getElementById('dashboardView');
+  if (authEl) { authEl.classList.add('hidden'); authEl.style.display = 'none'; }
+  if (dashEl) { dashEl.classList.remove('hidden'); dashEl.style.display = 'flex'; }
+  if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
 }
 
 async function handleAdminLogin(event) {
   event.preventDefault();
   const password = document.getElementById('loginPasswordInput').value;
+  const rememberDevice = document.getElementById('chkRememberDevice')?.checked ?? true;
   const errorBox = document.getElementById('loginErrorMsg');
   const errorText = document.getElementById('loginErrorText');
   const submitBtn = document.getElementById('loginSubmitBtn');
@@ -375,12 +364,15 @@ async function handleAdminLogin(event) {
     const res = await fetch('/api/admin/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password })
+      body: JSON.stringify({ password, rememberDevice })
     });
     const data = await res.json();
     if (res.ok && data.ok && data.token) {
       adminState.adminToken = data.token;
       localStorage.setItem('tanz_admin_token', data.token);
+      if (data.deviceToken) {
+        localStorage.setItem('tanz_trusted_device_token', data.deviceToken);
+      }
       errorBox.classList.add('hidden');
       showDashboardView();
       loadAdminData();
@@ -472,10 +464,10 @@ function switchTab(tab) {
   if (breadcrumb) breadcrumb.innerText = titles[tab] || '管理后台';
 
   if (tab === 'notify') loadNotificationSettings();
-  if (tab === 'settings') loadSystemSettings();
+  if (tab === 'settings') { loadSystemSettings(); refreshSecurityStatus(); loadTrustedDevices(); }
   if (tab === 'logs') loadAdminAuditLogs();
 
-  lucide.createIcons();
+  if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
 }
 
 // ---------------------------------------------------------------------
@@ -867,7 +859,7 @@ function openEditServerModal(serverId) {
   if (trAlertEl) trAlertEl.value = s.trafficAlertPercent || 80;
 
   document.getElementById('editServerModal').classList.remove('hidden');
-  lucide.createIcons();
+  if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
 }
 
 function closeEditServerModal() {
@@ -1360,7 +1352,7 @@ function openEditTargetModal(targetId) {
   document.getElementById('editTargetGroup').value = t.group || '目标';
 
   document.getElementById('editTargetModal').classList.remove('hidden');
-  lucide.createIcons();
+  if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
 }
 
 function closeEditTargetModal() {
@@ -1666,7 +1658,7 @@ function openUninstallModal(serverId) {
   if (cmdBox) cmdBox.innerText = cmd;
 
   document.getElementById('uninstallModal').classList.remove('hidden');
-  lucide.createIcons();
+  if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
 }
 
 function closeUninstallModal() {
