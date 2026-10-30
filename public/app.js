@@ -1669,17 +1669,18 @@ function buildServerCardHtml(s) {
 
       <!-- Live Speed & Traffic Footer -->
       <div class="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-        <div class="flex items-center space-x-2">
-          <span class="card-rx-speed font-mono text-emerald-600 font-semibold tabular-nums inline-block min-w-[82px]">↓ ${formatSpeed(rxSpeed)}</span>
-          <span class="card-tx-speed font-mono text-indigo-600 font-semibold tabular-nums inline-block min-w-[82px]">↑ ${formatSpeed(txSpeed)}</span>
+        <div class="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
+          <span class="card-rx-speed font-mono text-emerald-600 font-semibold tabular-nums inline-block min-w-[68px] sm:min-w-[72px]">↓ ${formatSpeed(rxSpeed)}</span>
+          <span class="card-tx-speed font-mono text-indigo-600 font-semibold tabular-nums inline-block min-w-[68px] sm:min-w-[72px]">↑ ${formatSpeed(txSpeed)}</span>
         </div>
-        <div class="card-total-traffic text-right font-mono tracking-tight leading-tight shrink-0">
-          <div class="text-xs sm:text-[13px] text-slate-700 font-medium">
+        <div class="card-total-traffic text-right font-mono tracking-tight text-xs sm:text-[13px] shrink-0 flex items-center justify-end space-x-1.5 sm:space-x-2">
+          <span class="text-slate-700 font-medium whitespace-nowrap">
             总计 <span class="card-lifetime-traffic-val card-total-traffic-val font-bold text-slate-900 sm:text-[14px]">${formatBytes(lifetimeTraffic, 1)}</span>
-          </div>
-          <div class="text-[10px] text-slate-400 font-normal">
-            启动 <span class="card-boot-traffic-val">${formatBytes(bootTraffic, 1)}</span>
-          </div>
+          </span>
+          <span class="text-slate-300 font-light select-none">·</span>
+          <span class="text-[11px] sm:text-xs text-slate-400 font-normal whitespace-nowrap">
+            启动 <span class="card-boot-traffic-val text-slate-600 font-medium">${formatBytes(bootTraffic, 1)}</span>
+          </span>
         </div>
       </div>
     </div>
