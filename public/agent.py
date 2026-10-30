@@ -9,6 +9,8 @@ import re
 import sys
 import time
 import json
+import hmac
+import hashlib
 import math
 import socket
 import threading
@@ -16,6 +18,17 @@ import platform
 import subprocess
 import urllib.request
 import urllib.error
+
+def verify_action_signature(action, node_id, node_secret, target_url, timestamp, sig):
+    if not sig or not timestamp:
+        return False
+    now = int(time.time())
+    if abs(now - int(timestamp)) > 300:
+        print(f"🚨 [SECURITY ALERT] Action '{action}' signature expired (timestamp delta: {now - int(timestamp)} s)")
+        return False
+    payload = f"{action}:{node_id}:{timestamp}:{target_url}".encode("utf-8")
+    expected = hmac.new(node_secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(sig, expected)
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
@@ -602,7 +615,12 @@ def main():
                 resp_data = json.loads(resp.read().decode("utf-8"))
                 if resp_data.get("action") == "migrate" and resp_data.get("targetMasterUrl"):
                     new_url = resp_data["targetMasterUrl"]
-                    print(f"🚀 [Tanz Agent] Received migration command! Handing over to: {new_url}")
+                    sig = resp_data.get("sig", "")
+                    ts = resp_data.get("timestamp", 0)
+                    if not verify_action_signature("migrate", self.node_id, self.node_secret, new_url, ts, sig):
+                        print(f"🚨 [SECURITY ALERT] Untrusted or forged 'migrate' command rejected! HMAC signature verification failed.")
+                        continue
+                    print(f"🚀 [Tanz Agent] Validated signed migration command! Handing over to: {new_url}")
                     self.master_url = new_url
                     try:
                         self.save_config()
@@ -612,7 +630,12 @@ def main():
                     continue
 
                 if resp_data.get("action") == "uninstall":
-                    print("[Tanz Agent] Received uninstall command from master. Executing self-removal...")
+                    sig = resp_data.get("sig", "")
+                    ts = resp_data.get("timestamp", 0)
+                    if not verify_action_signature("uninstall", self.node_id, self.node_secret, "", ts, sig):
+                        print(f"🚨 [SECURITY ALERT] Untrusted or forged 'uninstall' command rejected! HMAC signature verification failed.")
+                        continue
+                    print("🧹 [Tanz Agent] Validated signed uninstall command from master. Executing self-removal...")
                     cmd = (
                         "sleep 1 && "
                         "systemctl stop tanz-agent 2>/dev/null || true && "

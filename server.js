@@ -3,6 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const dns = require('dns').promises;
 const { execFile } = require('child_process');
 const express = require('express');
 const http = require('http');
@@ -627,7 +628,16 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0 }));
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: 0,
+  setHeaders: (res, path) => {
+    if (path.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
 
 // Dedicated Admin Portal Route
 app.get('/admin', (req, res) => {
@@ -1676,6 +1686,74 @@ function saveMigrationState() {
 }
 
 // A 机器发起迁移并生成授权密钥
+// =====================================================================
+// SSRF (Server-Side Request Forgery) Defense Engine
+// =====================================================================
+function isPrivateOrReservedIp(ipStr) {
+  if (!ipStr) return true;
+  let clean = ipStr.trim();
+  if (clean.startsWith('::ffff:')) {
+    clean = clean.replace('::ffff:', '');
+  }
+
+  // IPv6 loopback and link-local
+  if (clean === '::1' || clean === '::' || clean.toLowerCase().startsWith('fe80:') || clean.toLowerCase().startsWith('fc00:') || clean.toLowerCase().startsWith('fd00:')) {
+    return true;
+  }
+
+  // IPv4 checks
+  const parts = clean.split('.').map(Number);
+  if (parts.length === 4 && parts.every(p => !isNaN(p) && p >= 0 && p <= 255)) {
+    // 127.0.0.0/8 (Loopback)
+    if (parts[0] === 127) return true;
+    // 10.0.0.0/8 (Private RFC1918)
+    if (parts[0] === 10) return true;
+    // 172.16.0.0/12 (Private RFC1918)
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    // 192.168.0.0/16 (Private RFC1918)
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    // 169.254.0.0/16 (Link-local & Cloud Metadata 169.254.169.254)
+    if (parts[0] === 169 && parts[1] === 254) return true;
+    // 0.0.0.0/8 (Current network)
+    if (parts[0] === 0) return true;
+    // Multicast & Broadcast: 224.0.0.0/4, 255.255.255.255
+    if (parts[0] >= 224) return true;
+  }
+  return false;
+}
+
+async function validateSafePublicMigrationUrl(inputUrl) {
+  let parsed;
+  try {
+    parsed = new URL(inputUrl);
+  } catch (e) {
+    throw new Error('无效的目标 URL 格式');
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('仅允许 HTTP 或 HTTPS 协议');
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (!hostname || hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+    throw new Error('安全防御拦截 (SSRF): 严禁将迁移目标指向本地回环地址 (localhost / 127.0.0.1)');
+  }
+
+  // Resolve DNS to verify all destination IPs
+  const addresses = await dns.lookup(hostname, { all: true });
+  if (!addresses || addresses.length === 0) {
+    throw new Error(`无法解析迁移目标域名: ${hostname}`);
+  }
+
+  for (const item of addresses) {
+    if (isPrivateOrReservedIp(item.address)) {
+      throw new Error(`安全防御拦截 (SSRF): 目标地址 [${hostname}] 解析为内网私有或保留 IP [${item.address}]，已被系统安全层强制拦截！`);
+    }
+  }
+
+  return parsed.origin;
+}
+
 app.post('/api/admin/migration/initiate', requireAdmin, (req, res) => {
   const { targetHost } = req.body;
   if (!targetHost || typeof targetHost !== 'string') {
@@ -1784,6 +1862,14 @@ app.post('/api/admin/migration/pull', requireAdmin, async (req, res) => {
   }
   cleanSource = cleanSource.replace(/\/+$/, '');
 
+  // SSRF Security Verification
+  try {
+    await validateSafePublicMigrationUrl(cleanSource);
+  } catch (ssrfErr) {
+    console.warn(`🚨 [SSRF Intercepted] Blocked migration pull from unsafe host: ${cleanSource} - ${ssrfErr.message}`);
+    return res.status(400).json({ ok: false, error: ssrfErr.message });
+  }
+
   try {
     const exportUrl = `${cleanSource}/api/migration/export`;
     console.log(`📥 [Migration Pull] Fetching data from: ${exportUrl}`);
@@ -1863,14 +1949,25 @@ app.get('/api/admin/migration/status', requireAdmin, (req, res) => {
 });
 
 app.post('/api/report', (req, res) => {
-  // If master has migrated away, command worker agent to migrate to new master!
+  // If master has migrated away, command worker agent to migrate to new master (HMAC Cryptographically Signed)
   if (migrationState && migrationState.status === 'migrated_away' && migrationState.newMasterUrl) {
+    const migNodeId = req.headers['x-node-id'] || req.body?.id;
+    const migSecret = req.headers['x-node-secret'] || req.body?.secret;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const targetUrl = migrationState.newMasterUrl;
+    let sig = '';
+    if (migSecret && migNodeId) {
+      const payload = `migrate:${migNodeId}:${nowSec}:${targetUrl}`;
+      sig = crypto.createHmac('sha256', migSecret).update(payload).digest('hex');
+    }
+
     return res.json({
       ok: true,
-      timestamp: Date.now(),
+      timestamp: nowSec,
       action: 'migrate',
-      targetMasterUrl: migrationState.newMasterUrl,
-      message: '主控面板已迁移至新服务器，请自动切换汇报地址'
+      targetMasterUrl: targetUrl,
+      sig: sig,
+      message: '主控面板已迁移至新服务器，指令已通过 HMAC 私钥签名校验'
     });
   }
 
@@ -2081,16 +2178,21 @@ app.post('/api/report', (req, res) => {
 
   // Return ping targets & interval back to agent
   const pendingAction = pendingActions.get(nodeId);
+  let actionSig = null;
   if (pendingAction) {
     pendingActions.delete(nodeId);
+    // Generate HMAC signature for high-risk actions (e.g. uninstall)
+    const payload = `${pendingAction}:${nodeId}:${nowSec}:`;
+    actionSig = crypto.createHmac('sha256', nodeSecret).update(payload).digest('hex');
   }
 
   const needInfo = !t.info || Object.keys(t.info).length === 0;
   res.json({
     ok: true,
-    timestamp: now,
+    timestamp: nowSec,
     needInfo: needInfo,
     action: pendingAction || null,
+    sig: actionSig,
     pingTargets: pingTargets,
     pingIntervalSec: config.pingIntervalSec || 3
   });
@@ -2359,14 +2461,24 @@ function normalizeIp(ip) {
 }
 
 function getClientIp(req) {
-  const raw = (
-    req.headers['cf-connecting-ip'] ||
-    req.headers['x-real-ip'] ||
-    (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) ||
-    req.socket.remoteAddress ||
-    '127.0.0.1'
-  );
-  return normalizeIp(raw);
+  const socketRemote = normalizeIp(req.socket.remoteAddress || '127.0.0.1');
+  // Strict Proxy Anti-Spoofing: Only trust proxy headers if request originated from local reverse proxy
+  if (socketRemote === '127.0.0.1' || socketRemote === '::1' || socketRemote === 'localhost') {
+    // 1. Strictly prioritize X-Real-IP forced by Nginx ($remote_addr)
+    const realIp = req.headers['x-real-ip'];
+    if (realIp && typeof realIp === 'string') {
+      const norm = normalizeIp(realIp.trim());
+      if (norm) return norm;
+    }
+    // 2. Cloudflare authenticated connecting IP
+    const cfIp = req.headers['cf-connecting-ip'];
+    if (cfIp && typeof cfIp === 'string') {
+      const norm = normalizeIp(cfIp.trim());
+      if (norm) return norm;
+    }
+  }
+  // Direct connection without trusted reverse proxy: strictly use real socket address
+  return socketRemote;
 }
 
 // Set of known installed agent IPs (initialized with localhost and master IP)
@@ -2430,12 +2542,10 @@ function requireAdmin(req, res, next) {
   const ip = getClientIp(req);
   const now = Date.now();
 
-  // 1. IP whitelist: If request comes from an installed probe node machine, allow bypass directly!
-  if (isInstalledAgentIp(ip)) {
-    return next();
-  }
+  // Strict Security Hardening: NO unauthenticated bare IP bypass.
+  // All administrative operations strictly require cryptographically verified session token or master password.
 
-  // 2. Token / password validation
+  // Token / password validation
   const token = req.headers['x-admin-token'] || req.query.token;
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized: Missing admin token' });
@@ -2489,36 +2599,12 @@ app.get('/api/admin/auth-status', (req, res) => {
     }
   }
 
-  // 2. Auto-login if coming from an installed probe machine IP!
-  if (isAgent) {
-    const sessionToken = 'tok_agent_' + crypto.randomBytes(24).toString('hex');
-    activeSessions.set(sessionToken, {
-      ip,
-      createdAt: now,
-      expiresAt: now + SESSION_TTL_MS,
-      lastActive: now,
-      autoByAgentIp: true
-    });
-
-    addAuditLog('auth', `🟢 探针节点主机免密直登后台 (来源节点 IP: ${ip})`);
-
-    return res.json({
-      ok: true,
-      authenticated: true,
-      autoLogin: true,
-      token: sessionToken,
-      clientIp: ip,
-      isAgentIp: true,
-      message: '已识别为探针节点 IP，免密自动登录后台'
-    });
-  }
-
-  // 3. Not authenticated
+  // Strict Security: Bare IP auto-login is completely removed to prevent NAT/proxy privilege escalation.
   return res.json({
     ok: true,
     authenticated: false,
     clientIp: ip,
-    isAgentIp: false
+    isAgentIp: isAgent
   });
 });
 

@@ -3,6 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"bytes"
 	"encoding/json"
 	"flag"
@@ -37,11 +40,30 @@ type PingTarget struct {
 
 type MasterResponse struct {
 	OK              bool         `json:"ok"`
+	Timestamp       int64        `json:"timestamp"`
 	Action          string       `json:"action"`
+	Sig             string       `json:"sig"`
 	TargetMasterUrl string       `json:"targetMasterUrl"`
 	NeedInfo        bool         `json:"needInfo"`
 	PingIntervalSec float64      `json:"pingIntervalSec"`
 	PingTargets     []PingTarget `json:"pingTargets"`
+}
+
+func verifyActionSignature(action, nodeID, nodeSecret, targetURL string, timestamp int64, sig string) bool {
+	if sig == "" || timestamp <= 0 {
+		return false
+	}
+	now := time.Now().Unix()
+	diff := now - timestamp
+	if diff < -300 || diff > 300 {
+		fmt.Printf("🚨 [SECURITY ALERT] Action '%s' signature expired (timestamp delta: %d s)\n", action, diff)
+		return false
+	}
+	payload := fmt.Sprintf("%s:%s:%d:%s", action, nodeID, timestamp, targetURL)
+	mac := hmac.New(sha256.New, []byte(nodeSecret))
+	mac.Write([]byte(payload))
+	expected := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(sig), []byte(expected))
 }
 
 type DiskInfo struct {
@@ -867,7 +889,11 @@ func main() {
 		var mResp MasterResponse
 		if err := json.Unmarshal(respBytes, &mResp); err == nil {
 			if mResp.Action == "migrate" && mResp.TargetMasterUrl != "" {
-				fmt.Printf("🚀 [Tanz Agent] Received master migration command! Handing over to: %s\n", mResp.TargetMasterUrl)
+				if !verifyActionSignature(mResp.Action, cfg.NodeID, cfg.NodeSecret, mResp.TargetMasterUrl, mResp.Timestamp, mResp.Sig) {
+					fmt.Printf("🚨 [SECURITY ALERT] Untrusted or forged 'migrate' command rejected! HMAC signature verification failed.\n")
+					continue
+				}
+				fmt.Printf("🚀 [Tanz Agent] Validated signed master migration command! Handing over to: %s\n", mResp.TargetMasterUrl)
 				cfg.MasterURL = mResp.TargetMasterUrl
 				if cfgData, err := json.MarshalIndent(cfg, "", "  "); err == nil {
 					_ = os.WriteFile("/opt/tanz-agent/config.json", cfgData, 0644)
@@ -877,7 +903,11 @@ func main() {
 				continue
 			}
 			if mResp.Action == "uninstall" {
-				fmt.Println("🧹 [Tanz Agent] Received uninstall command from master. Executing self-removal...")
+				if !verifyActionSignature(mResp.Action, cfg.NodeID, cfg.NodeSecret, "", mResp.Timestamp, mResp.Sig) {
+					fmt.Printf("🚨 [SECURITY ALERT] Untrusted or forged 'uninstall' command rejected! HMAC signature verification failed.\n")
+					continue
+				}
+				fmt.Println("🧹 [Tanz Agent] Validated signed uninstall command from master. Executing self-removal...")
 				cmd := "sleep 1 && systemctl stop tanz-agent 2>/dev/null || true && systemctl disable tanz-agent 2>/dev/null || true && rm -f /etc/systemd/system/tanz-agent.service && systemctl daemon-reload 2>/dev/null || true && rm -rf /opt/tanz-agent && pkill -9 -f tanz-agent 2>/dev/null || true"
 				_ = exec.Command("bash", "-c", cmd).Start()
 				os.Exit(0)

@@ -3038,7 +3038,7 @@ document.addEventListener('DOMContentLoaded', () => {
 let deferredPwaPrompt = null;
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').then(reg => {
+    navigator.serviceWorker.register('/sw.js?v=32.0').then(reg => {
       console.log('Tarnz PWA ServiceWorker registered with scope:', reg.scope);
     }).catch(err => {
       console.log('PWA ServiceWorker registration skipped:', err);

@@ -173,6 +173,25 @@ tanz-probe/
 
 ---
 
+---
+
+## 🛡️ 安全防御体系与加固规范 (Security & Hardening)
+
+本项目主控面板与分布式子探针具备生产级纵深防御体系：
+
+1. **防 Header 伪造与 IP 劫持 (Anti-IP Spoofing)**：
+   - Nginx 反向代理层强制配置 `proxy_set_header X-Real-IP $remote_addr;` 与 `proxy_set_header X-Forwarded-For $remote_addr;`，强制剥离客户端伪造的 `X-Forwarded-For`。
+   - Node.js 核心网关仅信任由本地反代（127.0.0.1）注入的 `X-Real-IP`，杜绝任何直连伪造。
+   - **彻底摒弃裸 IP 鉴权**：全面禁用仅凭来源 IP 免密直登的后门机制，防范因公网 NAT、校园网/公司局域网共享公网出口、或云提供商动态回收 IP 带来的提权风险。所有后台管理操作必须由高强度口令换取加密会话 Token。
+2. **迁移接口 SSRF 拦截防御 (Anti-SSRF Protection)**：
+   - 在主控热迁移 `POST /api/admin/migration/pull` 接口中，内置严格的 URL 协议校验（仅限 HTTP/HTTPS）与异步 DNS 解析（`dns.lookup`）。
+   - 彻底封禁本地回环（`127.0.0.0/8`）、RFC 1918 私有内网网段（`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`）及云厂商元数据地址（`169.254.169.254`），坚决防范内部局域网探测或云服务器元数据泄露。
+3. **探针端高危动作密码学加锁 (HMAC-SHA256 Action Signature)**：
+   - 子探针接收 `migrate`（切换主控汇报地址）与 `uninstall`（远程卸载清理）等敏感动作前，必须验证由主控基于该节点静态私钥 `NodeSecret` 签发的 `HMAC-SHA256` 签名。
+   - 包含 Unix 秒级时间戳与防重放校验（`|当前时间 - 签发时间| <= 300 秒`）。任何非授权伪造主控或中间人篡改指令均会被子探针底层立即丢弃。
+
+---
+
 ## 💖 鸣谢与致谢 (Credits & Acknowledgments)
 
 本项目在开发与演进过程中，深度参考并受益于开源社区众多优秀的网络诊断与监控项目，特此致以诚挚的感谢：
