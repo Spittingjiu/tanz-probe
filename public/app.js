@@ -2220,12 +2220,12 @@ function renderModalUnlocks(unlocks = {}) {
     }
 
     return `
-      <div class="py-1.5 px-2.5 rounded-xl bg-white border border-slate-200/90 shadow-2xs hover:border-slate-300 hover:shadow-xs transition-all flex items-center justify-between gap-2">
+      <div class="py-1.5 px-2.5 rounded-xl bg-slate-50/80 dark:bg-[#151e32] border border-slate-200/80 dark:border-slate-800 shadow-2xs hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-xs transition-all flex items-center justify-between gap-2">
         <div class="flex items-center space-x-2 min-w-0">
           <div class="w-6 h-6 rounded-lg ${srv.bgCls} border flex items-center justify-center shrink-0 shadow-2xs">
             ${srv.iconSvg}
           </div>
-          <span class="font-bold text-xs text-slate-800 truncate">${srv.name}</span>
+          <span class="font-bold text-xs text-slate-800 dark:text-slate-200 truncate">${srv.name}</span>
         </div>
         <div class="shrink-0 pl-1">
           ${badgeHtml}
@@ -2661,7 +2661,7 @@ function renderSparklinesWithData(data, server) {
           font: { size: 9, family: 'ui-monospace, monospace' },
           color: '#94a3b8'
         },
-        grid: { color: 'rgba(241, 245, 249, 1)' }
+        grid: { color: getChartThemeColors().gridColor }
       }
     },
     elements: {
@@ -2705,7 +2705,7 @@ function renderSparklinesWithData(data, server) {
           font: { size: 9, family: 'ui-monospace, monospace' },
           color: '#94a3b8'
         },
-        grid: { color: 'rgba(241, 245, 249, 1)' }
+        grid: { color: getChartThemeColors().gridColor }
       }
     },
     elements: {
@@ -2794,26 +2794,26 @@ function renderModalRoutes(routes) {
   if (!grid) return;
   const r = routes || { telecom: '电信 163', unicom: '联通 4837', mobile: '移动 CMI' };
   grid.innerHTML = `
-    <div class="py-1.5 px-2.5 rounded-xl bg-sky-50/70 border border-sky-200/80 flex items-center justify-between gap-2">
+    <div class="py-1.5 px-2.5 rounded-xl bg-sky-50/70 dark:bg-sky-950/40 border border-sky-200/80 dark:border-sky-800/60 flex items-center justify-between gap-2">
       <div class="flex items-center space-x-2 min-w-0">
         <div class="w-6 h-6 rounded-lg bg-sky-500 text-white flex items-center justify-center font-bold text-[11px] shrink-0 shadow-2xs">电</div>
-        <span class="text-xs font-mono font-bold text-sky-900 truncate">${r.telecom || '电信 163'}</span>
+        <span class="text-xs font-mono font-bold text-sky-900 dark:text-sky-300 truncate">${r.telecom || '电信 163'}</span>
       </div>
-      <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-100 text-sky-700 border border-sky-300/60 shrink-0 font-mono">回程</span>
+      <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-100 dark:bg-sky-900/60 text-sky-700 dark:text-sky-300 border border-sky-300/60 dark:border-sky-700/50 shrink-0 font-mono">回程</span>
     </div>
-    <div class="py-1.5 px-2.5 rounded-xl bg-amber-50/70 border border-amber-200/80 flex items-center justify-between gap-2">
+    <div class="py-1.5 px-2.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800/60 flex items-center justify-between gap-2">
       <div class="flex items-center space-x-2 min-w-0">
         <div class="w-6 h-6 rounded-lg bg-amber-500 text-white flex items-center justify-center font-bold text-[11px] shrink-0 shadow-2xs">联</div>
-        <span class="text-xs font-mono font-bold text-amber-900 truncate">${r.unicom || '联通 4837'}</span>
+        <span class="text-xs font-mono font-bold text-amber-900 dark:text-amber-300 truncate">${r.unicom || '联通 4837'}</span>
       </div>
-      <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-300/60 shrink-0 font-mono">回程</span>
+      <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 border border-amber-300/60 dark:border-amber-700/50 shrink-0 font-mono">回程</span>
     </div>
-    <div class="py-1.5 px-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200/80 flex items-center justify-between gap-2">
+    <div class="py-1.5 px-2.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/60 flex items-center justify-between gap-2">
       <div class="flex items-center space-x-2 min-w-0">
         <div class="w-6 h-6 rounded-lg bg-emerald-500 text-white flex items-center justify-center font-bold text-[11px] shrink-0 shadow-2xs">移</div>
-        <span class="text-xs font-mono font-bold text-emerald-900 truncate">${r.mobile || '移动 CMI'}</span>
+        <span class="text-xs font-mono font-bold text-emerald-900 dark:text-emerald-300 truncate">${r.mobile || '移动 CMI'}</span>
       </div>
-      <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-300/60 shrink-0 font-mono">回程</span>
+      <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300/60 dark:border-emerald-700/50 shrink-0 font-mono">回程</span>
     </div>
   `;
 }
@@ -3067,7 +3067,7 @@ function renderModalLatencyChart(server, telemetryData) {
               },
               y: {
                 beginAtZero: false,
-                grid: { color: 'rgba(241, 245, 249, 1)' },
+                grid: { color: getChartThemeColors().gridColor },
                 ticks: {
                   callback: v => v + ' ms',
                   font: { family: 'ui-monospace, monospace', size: 10 }
@@ -3123,7 +3123,118 @@ function updateClock() {
   }
 }
 
+
+// ---------------------------------------------------------------------
+// Theme Manager: System Auto-Detect & Dynamic Sync
+// ---------------------------------------------------------------------
+let currentTheme = localStorage.getItem('tanz_theme') || 'system';
+
+function initTheme() {
+  applyTheme(currentTheme, false);
+
+  // Realtime listener for system/phone dark mode toggle
+  if (window.matchMedia) {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = (e) => {
+      if ((localStorage.getItem('tanz_theme') || 'system') === 'system') {
+        const isDark = e.matches;
+        document.documentElement.classList.toggle('dark', isDark);
+        updateThemeUI();
+        applyThemeToCharts();
+      }
+    };
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', handler);
+    } else if (mediaQuery.addListener) {
+      mediaQuery.addListener(handler);
+    }
+  }
+}
+
+function toggleThemeMode() {
+  // Cycle: system (自动) -> dark (深色) -> light (浅色) -> system (自动)
+  if (currentTheme === 'system') {
+    currentTheme = 'dark';
+  } else if (currentTheme === 'dark') {
+    currentTheme = 'light';
+  } else {
+    currentTheme = 'system';
+  }
+  localStorage.setItem('tanz_theme', currentTheme);
+  applyTheme(currentTheme, true);
+}
+
+function applyTheme(theme, showFeedback = false) {
+  const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.classList.toggle('dark', isDark);
+
+  updateThemeUI();
+  applyThemeToCharts();
+
+  if (showFeedback && typeof showToast === 'function') {
+    const modeNames = { system: '跟随系统 📱', dark: '深色极客 🌙', light: '极简明亮 ☀️' };
+    showToast(`显示主题: ${modeNames[theme] || theme}`, 'info');
+  }
+}
+
+function updateThemeUI() {
+  const icon = document.getElementById('themeIcon');
+  const text = document.getElementById('themeText');
+  const btn = document.getElementById('themeToggleBtn');
+  if (!icon) return;
+
+  const isDark = document.documentElement.classList.contains('dark');
+
+  if (currentTheme === 'system') {
+    icon.setAttribute('data-lucide', isDark ? 'sparkles' : 'sun-medium');
+    if (text) text.textContent = '自动';
+    if (btn) btn.title = `显示模式: 跟随系统 (当前为${isDark ? '深色' : '浅色'}) · 点击切换`;
+  } else if (currentTheme === 'dark') {
+    icon.setAttribute('data-lucide', 'moon');
+    if (text) text.textContent = '深色';
+    if (btn) btn.title = '显示模式: 强制深色 · 点击切换';
+  } else {
+    icon.setAttribute('data-lucide', 'sun');
+    if (text) text.textContent = '浅色';
+    if (btn) btn.title = '显示模式: 强制浅色 · 点击切换';
+  }
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function getChartThemeColors() {
+  const isDark = document.documentElement.classList.contains('dark');
+  return {
+    gridColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(241, 245, 249, 1)',
+    tickColor: isDark ? '#94a3b8' : '#64748b',
+    tooltipBg: isDark ? 'rgba(15, 23, 42, 0.95)' : 'rgba(15, 23, 42, 0.92)'
+  };
+}
+
+function applyThemeToCharts() {
+  const tc = getChartThemeColors();
+  const charts = [state.modalCpuChart, state.modalMemChart, state.modalLatencyChart, state.chartInstance];
+  charts.forEach(chart => {
+    if (chart && chart.options && chart.options.scales) {
+      if (chart.options.scales.y && chart.options.scales.y.grid) {
+        chart.options.scales.y.grid.color = tc.gridColor;
+      }
+      if (chart.options.scales.y && chart.options.scales.y.ticks) {
+        chart.options.scales.y.ticks.color = tc.tickColor;
+      }
+      if (chart.options.scales.x && chart.options.scales.x.ticks) {
+        chart.options.scales.x.ticks.color = tc.tickColor;
+      }
+      chart.update('none');
+    }
+  });
+}
+
+window.toggleThemeMode = toggleThemeMode;
+
+
 document.addEventListener('DOMContentLoaded', () => {
+  initTheme();
   setInterval(updateClock, 1000);
   updateClock();
 
