@@ -154,6 +154,13 @@ function animateNumber(element, targetValue, options = {}) {
     return;
   }
 
+  // ⚡ Zero-GC 2.0: If tab is hidden / mobile screen locked, bypass RAF loop completely (Zero CPU & Memory Allocation)
+  if (document.hidden) {
+    element.__animValue = targetValue;
+    element.innerText = formatter ? formatter(targetValue) : `${prefix}${targetValue.toFixed(decimals)}${suffix}`;
+    return;
+  }
+
   if (activeAnimations.has(element)) {
     cancelAnimationFrame(activeAnimations.get(element));
   }
@@ -320,23 +327,73 @@ function switchMainTab(tab) {
 }
 
 // ---------------------------------------------------------------------
-// WebSocket & Realtime Status Fallback
+// WebSocket & Realtime Status Fallback (Zero-GC 2.0 Robust Self-Healing)
 // ---------------------------------------------------------------------
 
+let wsReconnectTimer = null;
+let wsHeartbeatTimer = null;
+let wsWatchdogTimer = null;
+let wsReconnectDelay = 1000;
+let lastWsMessageTime = 0;
+
+function scheduleWsReconnect() {
+  if (wsReconnectTimer) return;
+  // Exponential backoff with jitter: 1s, 2s, 4s, 8s, max 10s
+  const jitter = 0.8 + Math.random() * 0.4;
+  const delay = Math.round(Math.min(10000, wsReconnectDelay) * jitter);
+  wsReconnectDelay = Math.min(10000, wsReconnectDelay * 1.5);
+
+  wsReconnectTimer = setTimeout(() => {
+    wsReconnectTimer = null;
+    initWebSocket();
+  }, delay);
+}
+
 function initWebSocket() {
+  // If an active socket is already open or connecting, avoid duplicate instances
+  if (state.ws && (state.ws.readyState === WebSocket.OPEN || state.ws.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
+  // Clean teardown of existing socket references
+  if (state.ws) {
+    try {
+      state.ws.onopen = null;
+      state.ws.onmessage = null;
+      state.ws.onclose = null;
+      state.ws.onerror = null;
+      state.ws.close();
+    } catch (e) {}
+    state.ws = null;
+  }
+
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.host}/ws`;
 
-  state.ws = new WebSocket(wsUrl);
+  try {
+    state.ws = new WebSocket(wsUrl);
+  } catch (err) {
+    state.wsConnected = false;
+    updateWsStatus(false);
+    scheduleWsReconnect();
+    return;
+  }
 
   state.ws.onopen = () => {
     state.wsConnected = true;
+    wsReconnectDelay = 1000; // Reset backoff on successful handshake
+    lastWsMessageTime = Date.now();
     updateWsStatus(true);
+    startWsHeartbeat();
   };
 
   state.ws.onmessage = (event) => {
+    lastWsMessageTime = Date.now();
     try {
       const data = JSON.parse(event.data);
+      if (data && data.type === 'pong') {
+        return; // Heartbeat pong handled
+      }
       handleDataUpdate(data);
     } catch (e) {
       console.error('Error parsing WS message:', e);
@@ -345,14 +402,54 @@ function initWebSocket() {
 
   state.ws.onclose = () => {
     state.wsConnected = false;
+    stopWsHeartbeat();
     updateWsStatus(false);
-    setTimeout(initWebSocket, 3000);
+    scheduleWsReconnect();
   };
 
   state.ws.onerror = () => {
     state.wsConnected = false;
     updateWsStatus(false);
   };
+}
+
+function startWsHeartbeat() {
+  stopWsHeartbeat();
+  // Send keepalive ping every 25s
+  wsHeartbeatTimer = setInterval(() => {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      try {
+        state.ws.send(JSON.stringify({ type: 'ping' }));
+      } catch (e) {}
+    }
+  }, 25000);
+
+  // Watchdog: detect silent zombie socket (half-open connection) every 10s
+  wsWatchdogTimer = setInterval(() => {
+    if (state.wsConnected && state.ws) {
+      const elapsed = Date.now() - lastWsMessageTime;
+      // If no packet/pong received for > 35s, socket has frozen silently
+      if (elapsed > 35000) {
+        console.warn('⚠️ WebSocket watchdog timeout: dead connection detected, reconnecting...');
+        state.wsConnected = false;
+        try {
+          state.ws.close();
+        } catch (e) {}
+        initWebSocket();
+      }
+    }
+  }, 10000);
+}
+
+function stopWsHeartbeat() {
+  if (wsHeartbeatTimer) {
+    clearInterval(wsHeartbeatTimer);
+    wsHeartbeatTimer = null;
+  }
+  if (wsWatchdogTimer) {
+    clearInterval(wsWatchdogTimer);
+    wsWatchdogTimer = null;
+  }
 }
 
 function updateWsStatus(connected) {
@@ -370,6 +467,11 @@ function updateWsStatus(connected) {
 }
 
 async function fetchStatusFallback() {
+  // ⚡ Zero-GC Optimization: If WebSocket is connected and streaming, skip HTTP polling completely!
+  if (state.wsConnected && state.ws && state.ws.readyState === WebSocket.OPEN) {
+    return;
+  }
+
   try {
     const res = await fetch('/api/status');
     if (!res.ok) return;
@@ -379,6 +481,30 @@ async function fetchStatusFallback() {
     console.error('Failed to fetch status:', err);
   }
 }
+
+// ---------------------------------------------------------------------
+// Page Visibility API (Background Tab Battery & Memory Optimization)
+// ---------------------------------------------------------------------
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    // Tab entered background or phone screen locked: rAF already suppressed in animateNumber
+  } else {
+    // Tab awakened / phone unlocked:
+    const now = Date.now();
+    // If WebSocket was dormant or timed out, poke watchdog or reconnect
+    if (!state.wsConnected || (now - lastWsMessageTime > 15000)) {
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        try {
+          state.ws.send(JSON.stringify({ type: 'ping' }));
+        } catch (e) {}
+      } else {
+        initWebSocket();
+      }
+    }
+    // Perform an immediate status sync to catch up on latest telemetry
+    fetchStatusFallback();
+  }
+});
 
 function handleDataUpdate(raw) {
   if (!raw) return;
@@ -745,15 +871,32 @@ function updateKomariDashboard() {
     greeting.innerText = '愿每一台服务器都稳定运行，一切尽在掌握';
   }
 
-  // Node array micro dots in Card 1
+  // Node array micro dots in Card 1 (Zero-GC In-Place Patching)
   const dotsContainer = document.getElementById('kpiClusterNodeDots');
   if (dotsContainer) {
-    dotsContainer.innerHTML = (state.servers || []).map(s => {
-      const t = (state.telemetry && state.telemetry[s.id]) || {};
-      const isOnline = (s.status === 'online') || (t.status === 'online');
-      const dotCls = isOnline ? 'bg-emerald-500 shadow-emerald-500/50' : 'bg-slate-300';
-      return `<span onclick="openServerDetail('${s.id}')" class="inline-block w-2.5 h-2.5 rounded-full ${dotCls} cursor-pointer transition-all hover:scale-125 hover:ring-2 hover:ring-indigo-400" title="${s.name} (${isOnline ? '在线' : '离线'})"></span>`;
-    }).join('');
+    const srvs = state.servers || [];
+    const children = dotsContainer.children;
+    if (children.length === srvs.length && srvs.length > 0) {
+      // In-place mutate dot attributes without rebuilding innerHTML
+      for (let i = 0; i < srvs.length; i++) {
+        const s = srvs[i];
+        const t = (state.telemetry && state.telemetry[s.id]) || {};
+        const isOnline = (s.status === 'online') || (t.status === 'online');
+        const dotCls = isOnline ? 'bg-emerald-500 shadow-emerald-500/50' : 'bg-slate-300';
+        const targetCls = `inline-block w-2.5 h-2.5 rounded-full ${dotCls} cursor-pointer transition-all hover:scale-125 hover:ring-2 hover:ring-indigo-400`;
+        const dot = children[i];
+        if (dot.className !== targetCls) dot.className = targetCls;
+        const targetTitle = `${s.name} (${isOnline ? '在线' : '离线'})`;
+        if (dot.title !== targetTitle) dot.title = targetTitle;
+      }
+    } else {
+      dotsContainer.innerHTML = srvs.map(s => {
+        const t = (state.telemetry && state.telemetry[s.id]) || {};
+        const isOnline = (s.status === 'online') || (t.status === 'online');
+        const dotCls = isOnline ? 'bg-emerald-500 shadow-emerald-500/50' : 'bg-slate-300';
+        return `<span onclick="openServerDetail('${s.id}')" class="inline-block w-2.5 h-2.5 rounded-full ${dotCls} cursor-pointer transition-all hover:scale-125 hover:ring-2 hover:ring-indigo-400" title="${s.name} (${isOnline ? '在线' : '离线'})"></span>`;
+      }).join('');
+    }
   }
 
   // 2. Realtime Throughput Card - EMA Smooth Filter to prevent frenzy oscillation
@@ -1139,6 +1282,7 @@ function setViewMode(mode) {
     gridContainer.classList.add('hidden');
     tableBtn.className = 'p-1.5 rounded-lg text-slate-900 bg-white shadow-xs transition-all';
     gridBtn.className = 'p-1.5 rounded-lg text-slate-400 hover:text-slate-900 transition-all';
+    renderTable(getFilteredAndSortedServers());
   }
 }
 
@@ -1214,7 +1358,10 @@ function renderServers() {
   }
   updateActiveFilterBadge();
   renderGrid(servers);
-  renderTable(servers);
+  // ⚡ Zero-GC: Only render table when table view is active, avoiding useless background DOM churn
+  if (state.viewMode === 'table') {
+    renderTable(servers);
+  }
 }
 
 function updateActiveFilterBadge() {
@@ -1277,16 +1424,19 @@ function renderGrid(servers) {
     return;
   }
 
-  // Check if existing cards in DOM match the server IDs in exact order
-  const existingCards = container.querySelectorAll('.node-card-item');
-  const existingIds = Array.from(existingCards).map(el => el.dataset.nodeId);
-  const targetIds = servers.map(s => s.id);
-
-  const isIdentical = existingIds.length === targetIds.length &&
-    existingIds.every((id, idx) => id === targetIds[idx]);
+  // ⚡ ZERO-ALLOCATION IN-PLACE DOM PATCHING (Zero-GC 2.0 Indexed Scan)
+  const existingCards = container.children;
+  let isIdentical = existingCards.length === servers.length;
+  if (isIdentical) {
+    for (let i = 0; i < servers.length; i++) {
+      if (existingCards[i].dataset.nodeId !== servers[i].id) {
+        isIdentical = false;
+        break;
+      }
+    }
+  }
 
   if (isIdentical) {
-    // ⚡ ZERO-ALLOCATION IN-PLACE DOM PATCHING
     for (let i = 0; i < servers.length; i++) {
       updateSingleCardInPlace(existingCards[i], servers[i]);
     }

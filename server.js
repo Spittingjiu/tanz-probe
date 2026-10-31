@@ -545,12 +545,15 @@ function initLatencyHistory() {
 }
 initLatencyHistory();
 
-// Periodically save history to disk (every 2 minutes)
-setInterval(() => {
+// Periodically save history to disk (every 2 minutes, Non-Blocking Async Atomic Write)
+async function saveLatencyHistoryAsync() {
   try {
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(latencyHistory));
+    const tmp = `${HISTORY_FILE}.tmp.${Date.now()}`;
+    await fs.promises.writeFile(tmp, JSON.stringify(latencyHistory));
+    await fs.promises.rename(tmp, HISTORY_FILE);
   } catch (e) {}
-}, 120000);
+}
+setInterval(saveLatencyHistoryAsync, 120000);
 
 let metricsHistory = {};
 
@@ -585,12 +588,15 @@ function initMetricsHistory() {
 }
 initMetricsHistory();
 
-// Periodically save metricsHistory to disk (every 2 minutes)
-setInterval(() => {
+// Periodically save metricsHistory to disk (every 2 minutes, Non-Blocking Async Atomic Write)
+async function saveMetricsHistoryAsync() {
   try {
-    fs.writeFileSync(METRICS_HISTORY_FILE, JSON.stringify(metricsHistory));
+    const tmp = `${METRICS_HISTORY_FILE}.tmp.${Date.now()}`;
+    await fs.promises.writeFile(tmp, JSON.stringify(metricsHistory));
+    await fs.promises.rename(tmp, METRICS_HISTORY_FILE);
   } catch (e) {}
-}, 120000);
+}
+setInterval(saveMetricsHistoryAsync, 120000);
 
 // In-memory telemetry cache
 const telemetry = new Map();

@@ -1188,6 +1188,7 @@
             <i data-lucide="x" class="w-4 h-4"></i>
             <span>关闭卡片详情</span>
           </button>
+
         </div>
 
       </div>
@@ -1749,6 +1750,24 @@
                 </div>
                 <p class="text-[11px] sm:text-xs text-slate-500 leading-relaxed">
                   高并发发包、纳秒级网络往返计时、丢包率与抖动统计完全移至后台独立的 <code class="px-1 py-0.5 rounded bg-slate-100 font-mono text-rose-600">ping-worker.js</code> 线程中运算，通过零拷贝消息通信回传。主线程免除任何长任务阻塞，确保前台 UI 维持纯正的 60 FPS 极速响应。
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Feature 10 -->
+          <div class="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:border-indigo-300 transition-colors">
+            <div class="flex items-start space-x-3">
+              <span class="p-2 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-100 shrink-0">
+                <i data-lucide="moon" class="w-4 h-4"></i>
+              </span>
+              <div class="space-y-1 min-w-0">
+                <div class="flex items-center space-x-2">
+                  <h4 class="font-bold text-xs sm:text-sm text-slate-900">10. 智能休眠与连接自愈守护 (Page Visibility & Self-Healing Watchdog)</h4>
+                  <span class="px-1.5 py-0.2 rounded text-[9px] bg-emerald-50 text-emerald-700 font-mono font-semibold">Zero-Sleep</span>
+                </div>
+                <p class="text-[11px] sm:text-xs text-slate-500 leading-relaxed">
+                  监听浏览器 <code class="px-1 py-0.5 rounded bg-slate-100 font-mono text-emerald-600">visibilitychange</code> 生命周期。移动端锁屏或切换后台标签页时，<b>自动熔断 rAF 补间循环，退化为零 CPU/零能耗静止态</b>；切回瞬间毫秒级快照对齐。集成 WebSocket 心跳狗（Watchdog）与指数退避（Jittered Backoff），彻底斩断移动端 4G/WiFi 切换引发的“半开僵尸连接”，保障 365 天无缝挂机不断流。
                 </p>
               </div>
             </div>
