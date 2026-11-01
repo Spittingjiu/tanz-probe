@@ -125,10 +125,16 @@ function calculateTrafficStats(s, t) {
   const limitGB = Number(s.trafficLimitGB) || 0;
   const resetDay = Number(s.trafficResetDay) || 1;
   const alertPercent = Number(s.trafficAlertPercent) || 80;
+  const calcMode = s.trafficCalcMode || 'both';
   const cycle = getCycleInfo(resetDay);
 
   const m = (t && t.metrics) || {};
-  const rawTotal = (m.net_rx_total || 0) + (m.net_tx_total || 0);
+  const rawRx = Number(m.net_rx_total) || 0;
+  const rawTx = Number(m.net_tx_total) || 0;
+  let rawTotal = rawRx + rawTx;
+  if (calcMode === 'tx') rawTotal = rawTx;
+  else if (calcMode === 'rx') rawTotal = rawRx;
+  else if (calcMode === 'max') rawTotal = Math.max(rawRx, rawTx);
 
   let ts = trafficState[s.id];
   let usedBytes = 0;
@@ -150,7 +156,7 @@ function calculateTrafficStats(s, t) {
 
   const usedGB = +(usedBytes / (1024 * 1024 * 1024)).toFixed(2);
   const lifetimeGB = +(lifetimeBytes / (1024 * 1024 * 1024)).toFixed(2);
-  const bootBytes = rawTotal;
+  const bootBytes = rawRx + rawTx;
   const bootGB = +(bootBytes / (1024 * 1024 * 1024)).toFixed(2);
 
   const limitBytes = limitGB * 1024 * 1024 * 1024;
@@ -2274,22 +2280,30 @@ app.post('/api/report', (req, res) => {
     if (serverConfig) serverConfig.unlocks = metrics.unlocks;
   }
 
-  // Update Monthly Traffic Tracking & Alert Threshold Checks
+  // Update Monthly Traffic Tracking & Alert Threshold Checks (Anti-Phantom Spike Guard)
   if (serverConfig) {
-    const rawRx = metrics.net_rx_total || 0;
-    const rawTx = metrics.net_tx_total || 0;
-    const rawTotal = rawRx + rawTx;
+    const rawRx = Number(metrics.net_rx_total) || 0;
+    const rawTx = Number(metrics.net_tx_total) || 0;
+    const calcMode = serverConfig.trafficCalcMode || 'both';
+    let rawTotal = rawRx + rawTx;
+    if (calcMode === 'tx') rawTotal = rawTx;
+    else if (calcMode === 'rx') rawTotal = rawRx;
+    else if (calcMode === 'max') rawTotal = Math.max(rawRx, rawTx);
 
     const cycle = getCycleInfo(serverConfig.trafficResetDay || 1);
     let ts = trafficState[nodeId];
 
-    if (!ts) {
+    // Guard: ignore empty/zero metrics packets from established nodes to prevent zero-reset multiplier bug
+    if (rawTotal <= 0 && ts && (ts.lastRaw || 0) > 0) {
+      // Do nothing, maintain existing counter
+    } else if (!ts) {
       // First time this node has ever reported
       ts = {
         cycleId: cycle.cycleId,
         cycleAccumulatedBytes: rawTotal,
         lifetimeAccumulatedBytes: rawTotal,
         lastRaw: rawTotal,
+        lastBootTime: info?.boot_time || 0,
         lastAlertLevel: 0,
         lastAlertTime: 0
       };
@@ -2297,13 +2311,12 @@ app.post('/api/report', (req, res) => {
       saveTrafficState();
     } else if (ts.cycleId !== cycle.cycleId) {
       // New billing month cycle started!
-      // Month resets, but LIFETIME ACCUMULATED BYTES NEVER RESETS!
       let delta = 0;
-      if (typeof ts.lastRaw === 'number') {
-        delta = rawTotal >= ts.lastRaw ? (rawTotal - ts.lastRaw) : rawTotal;
-      } else {
-        delta = rawTotal;
+      const prevRaw = typeof ts.lastRaw === 'number' ? ts.lastRaw : 0;
+      if (prevRaw > 0 && rawTotal >= prevRaw) {
+        delta = rawTotal - prevRaw;
       }
+      if (delta > 2 * 1024 * 1024 * 1024) delta = 0; // Cap single-tick spike
 
       const prevLifetime = typeof ts.lifetimeAccumulatedBytes === 'number'
         ? ts.lifetimeAccumulatedBytes
@@ -2311,36 +2324,61 @@ app.post('/api/report', (req, res) => {
 
       ts.cycleId = cycle.cycleId;
       ts.cycleAccumulatedBytes = delta;
-      ts.lifetimeAccumulatedBytes = prevLifetime + delta;
+      ts.lifetimeAccumulatedBytes = Math.max(prevLifetime + delta, rawTotal);
       ts.lastRaw = rawTotal;
+      ts.lastBootTime = info?.boot_time || ts.lastBootTime || 0;
       ts.lastAlertLevel = 0;
       saveTrafficState();
     } else {
       // Ongoing update in current cycle
       let delta = 0;
-      if (typeof ts.lastRaw === 'number') {
-        if (rawTotal >= ts.lastRaw) {
-          delta = rawTotal - ts.lastRaw;
-        } else {
-          // Node system rebooted: rawTotal started from 0
-          delta = rawTotal;
-        }
+      const prevRaw = typeof ts.lastRaw === 'number' ? ts.lastRaw : 0;
+
+      if (rawTotal >= prevRaw) {
+        delta = rawTotal - prevRaw;
       } else {
-        delta = rawTotal;
+        // rawTotal < prevRaw: Check if machine ACTUALLY rebooted
+        const currBootTime = info?.boot_time || 0;
+        const uptime = Number(metrics.uptime_seconds) || 0;
+        const isGenuineReboot = (currBootTime > 0 && ts.lastBootTime > 0 && currBootTime !== ts.lastBootTime) || (uptime > 0 && uptime < 600);
+
+        if (isGenuineReboot) {
+          delta = rawTotal;
+          ts.lastBootTime = currBootTime;
+        } else {
+          // Interface fluctuation or glitch: reject false drop
+          delta = 0;
+        }
+      }
+
+      // Reject anomalous delta spikes > 2GB in a single 2-second tick
+      if (delta > 2 * 1024 * 1024 * 1024) {
+        console.warn(`[Traffic Guard] Rejected phantom spike of ${delta} bytes on node ${nodeId}`);
+        delta = 0;
       }
 
       ts.cycleAccumulatedBytes = (ts.cycleAccumulatedBytes || 0) + delta;
 
+      // Mathematical constraint: if node booted after cycle start, cycle traffic can never exceed rawTotal!
+      const bootTimeSec = info?.boot_time || ts.lastBootTime || 0;
+      if (bootTimeSec >= (cycle.startDate.getTime() / 1000) && rawTotal > 0) {
+        if (ts.cycleAccumulatedBytes > rawTotal) {
+          ts.cycleAccumulatedBytes = rawTotal;
+        }
+      }
+
       if (typeof ts.lifetimeAccumulatedBytes !== 'number') {
-        ts.lifetimeAccumulatedBytes = ts.cycleAccumulatedBytes;
+        ts.lifetimeAccumulatedBytes = Math.max(ts.cycleAccumulatedBytes || 0, rawTotal);
       } else {
         ts.lifetimeAccumulatedBytes += delta;
+      }
       if (ts.lifetimeAccumulatedBytes < rawTotal) {
         ts.lifetimeAccumulatedBytes = rawTotal;
       }
-      }
 
-      ts.lastRaw = rawTotal;
+      if (rawTotal >= prevRaw || delta > 0) {
+        ts.lastRaw = rawTotal;
+      }
       saveTrafficState();
     }
 
@@ -3381,6 +3419,7 @@ app.put('/api/admin/servers/:id', requireAdmin, (req, res) => {
   if (trafficLimitGB !== undefined) serverRegistry[sIdx].trafficLimitGB = Number(trafficLimitGB) || 0;
   if (trafficResetDay !== undefined) serverRegistry[sIdx].trafficResetDay = Math.max(1, Math.min(31, Number(trafficResetDay))) || 1;
   if (trafficAlertPercent !== undefined) serverRegistry[sIdx].trafficAlertPercent = Math.max(50, Math.min(99, Number(trafficAlertPercent))) || 80;
+  if (req.body.trafficCalcMode !== undefined) serverRegistry[sIdx].trafficCalcMode = String(req.body.trafficCalcMode).trim();
   if (virtualization !== undefined) serverRegistry[sIdx].virtualization = virtualization.trim().toLowerCase();
 
   saveServers(serverRegistry);
