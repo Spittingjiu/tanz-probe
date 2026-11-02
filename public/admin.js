@@ -1812,6 +1812,220 @@ async function unlockSecurityIp(ip) {
 
 
 // ---------------------------------------------------------------------
+
+// ---------------------------------------------------------------------
+// Trusted Devices & Dual-Key IP Mutual Auth Management
+// ---------------------------------------------------------------------
+
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+async function loadTrustedDevices() {
+  const container = document.getElementById('trustedDevicesList');
+  const ipBadge = document.getElementById('currentClientIpBadge');
+  const statusBadge = document.getElementById('currentDeviceStatusBadge');
+
+  try {
+    const headers = { 'x-admin-token': adminState.adminToken };
+    const localDevToken = localStorage.getItem('tanz_trusted_device_token');
+    if (localDevToken) {
+      headers['x-device-token'] = localDevToken;
+    }
+
+    const res = await fetch('/api/admin/trusted-devices', { headers });
+    if (!res.ok) {
+      if (container) {
+        container.innerHTML = '<div class="p-4 rounded-xl bg-slate-50 border border-slate-200 text-center text-xs text-rose-500">无法加载受信任设备列表，请重试</div>';
+      }
+      return;
+    }
+
+    const data = await res.json();
+    if (ipBadge) ipBadge.innerText = data.currentClientIp || '--';
+
+    const currentDevice = localDevToken ? (data.devices || []).find(d => d.isCurrentDevice) : null;
+    if (statusBadge) {
+      if (currentDevice) {
+        if (currentDevice.isCurrentIp) {
+          statusBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200';
+          statusBadge.innerText = '🟢 已绑定当前 IP (免密就绪)';
+        } else {
+          statusBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200';
+          statusBadge.innerText = '🟡 IP变动 (需重新绑定)';
+        }
+      } else if (localDevToken) {
+        statusBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200';
+        statusBadge.innerText = '🔴 本机密钥已失效或注销';
+      } else {
+        statusBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200';
+        statusBadge.innerText = '⚪ 未绑定当前设备';
+      }
+    }
+
+    if (!container) return;
+
+    const devices = data.devices || [];
+    if (devices.length === 0) {
+      container.innerHTML = `
+        <div class="p-5 rounded-xl bg-slate-50 border border-slate-200/80 text-center text-xs text-slate-500">
+          <p class="font-medium text-slate-600">暂无受信任设备</p>
+          <p class="text-[11px] text-slate-400 mt-1">点击右上角「绑定当前设备」，即可将本台电脑/手机与当前公网 IP 绑定，享受双因子免密直登。</p>
+        </div>
+      `;
+      if (window.lucide) lucide.createIcons();
+      return;
+    }
+
+    container.innerHTML = devices.map(dev => {
+      const isCurDev = dev.isCurrentDevice;
+      const isCurIp = dev.isCurrentIp;
+      const createdStr = dev.createdAt ? new Date(dev.createdAt).toLocaleDateString() : '--';
+      const lastUsedStr = dev.lastUsedAt ? new Date(dev.lastUsedAt).toLocaleString() : '--';
+
+      return `
+        <div class="p-3.5 rounded-xl ${isCurDev ? 'bg-indigo-50/50 border-indigo-200 ring-1 ring-indigo-200' : 'bg-white border-slate-200'} border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs transition-all">
+          <div class="space-y-1">
+            <div class="flex items-center space-x-2">
+              <span class="font-bold text-slate-900">${escapeHtml(dev.name)}</span>
+              ${isCurDev ? '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700">当前设备</span>' : ''}
+              ${isCurIp ? '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">当前 IP 匹配</span>' : ''}
+            </div>
+            <div class="flex flex-wrap items-center gap-x-3 text-[11px] text-slate-500 font-mono">
+              <span>绑定 IP: <b class="text-slate-700 font-bold">${escapeHtml(dev.boundIp)}</b></span>
+              <span>·</span>
+              <span>最近使用: ${lastUsedStr}</span>
+              <span>·</span>
+              <span>授权时间: ${createdStr}</span>
+            </div>
+            <div class="text-[10px] text-slate-400 truncate max-w-md" title="${escapeHtml(dev.userAgent || '')}">
+              ${escapeHtml(dev.userAgent || '未知设备')}
+            </div>
+          </div>
+          <div class="flex items-center space-x-2 shrink-0">
+            <button type="button" onclick="revokeTrustedDevice('${escapeHtml(dev.id)}', '${escapeHtml(dev.name)}')" class="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-[11px] font-semibold transition-all cursor-pointer">
+              注销此设备
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    if (window.lucide) lucide.createIcons();
+  } catch (err) {
+    console.error('Failed to load trusted devices:', err);
+    if (container) {
+      container.innerHTML = '<div class="p-4 rounded-xl bg-slate-50 border border-slate-200 text-center text-xs text-rose-500">网络异常，无法加载受信任设备</div>';
+    }
+  }
+}
+
+async function bindCurrentDevice() {
+  const ua = navigator.userAgent;
+  let defaultName = '我的浏览器终端';
+  if (/iPhone|iPad|iPod/.test(ua)) defaultName = 'iPhone / iPad';
+  else if (/Android/.test(ua)) defaultName = 'Android 手机';
+  else if (/Macintosh/.test(ua)) defaultName = 'MacBook / Mac';
+  else if (/Windows/.test(ua)) defaultName = 'Windows PC';
+
+  const name = prompt('请输入当前设备名称（便于在已授权列表中识别）：', defaultName);
+  if (name === null) return;
+
+  try {
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-admin-token': adminState.adminToken
+    };
+    const curToken = localStorage.getItem('tanz_trusted_device_token');
+    if (curToken) headers['x-device-token'] = curToken;
+
+    const res = await fetch('/api/admin/trusted-devices/bind-current', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        deviceName: name.trim() || defaultName,
+        deviceToken: curToken || undefined
+      })
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      if (data.deviceToken) {
+        localStorage.setItem('tanz_trusted_device_token', data.deviceToken);
+      }
+      showToast(data.message || '绑定成功！本设备已授权双因子免密直登', 'success');
+      loadTrustedDevices();
+    } else {
+      showToast(data.error || '绑定设备失败', 'error');
+    }
+  } catch (err) {
+    console.error(err);
+    showToast('网络请求异常', 'error');
+  }
+}
+
+function clearLocalDeviceToken() {
+  if (!localStorage.getItem('tanz_trusted_device_token')) {
+    showToast('本机尚未存储受信任设备密钥', 'info');
+    return;
+  }
+  if (confirm('确定要清除本机保存的受信任密钥吗？清除后本终端将无法免密登录，需重新输入密码。')) {
+    localStorage.removeItem('tanz_trusted_device_token');
+    showToast('已清除本机密钥凭据', 'success');
+    loadTrustedDevices();
+  }
+}
+
+async function clearAllServerTrustedDevices() {
+  if (!confirm('⚠️ 警告：确定要一键解绑并注销服务端所有受信任设备吗？所有已绑定的电脑与手机均需重新输入密码登录。')) {
+    return;
+  }
+  try {
+    const res = await fetch('/api/admin/trusted-devices/clear-all', {
+      method: 'POST',
+      headers: { 'x-admin-token': adminState.adminToken }
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      localStorage.removeItem('tanz_trusted_device_token');
+      showToast(data.message || '已清空所有受信任设备', 'success');
+      loadTrustedDevices();
+    } else {
+      showToast(data.error || '清除设备失败', 'error');
+    }
+  } catch (err) {
+    console.error(err);
+    showToast('网络请求异常', 'error');
+  }
+}
+
+async function revokeTrustedDevice(id, name) {
+  if (!confirm(`确定要注销设备 [${name}] 的免密授权吗？`)) {
+    return;
+  }
+  try {
+    const res = await fetch(`/api/admin/trusted-devices/${encodeURIComponent(id)}/revoke`, {
+      method: 'POST',
+      headers: { 'x-admin-token': adminState.adminToken }
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      showToast(data.message || `已成功注销设备 [${name}]`, 'success');
+      loadTrustedDevices();
+    } else {
+      showToast(data.error || '注销设备失败', 'error');
+    }
+  } catch (err) {
+    console.error(err);
+    showToast('网络请求异常', 'error');
+  }
+}
+
+
 // Admin Add Node Modal & Services / SSL Probing
 // ---------------------------------------------------------------------
 
