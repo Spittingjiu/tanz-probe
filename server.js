@@ -2758,12 +2758,46 @@ function getClientIp(req) {
   const socketRemote = normalizeIp(req.socket.remoteAddress || '127.0.0.1');
   // Strict Proxy Anti-Spoofing: Only trust proxy headers if request originated from local reverse proxy
   if (socketRemote === '127.0.0.1' || socketRemote === '::1' || socketRemote === 'localhost') {
-    // 1. Strictly prioritize X-Real-IP forced by Nginx ($remote_addr)
+    // 1. Cloudflare authenticated real visitor IP (strictly from Cloudflare CDN)
+    const cfIp = req.headers['cf-connecting-ip'];
+    if (cfIp && typeof cfIp === 'string') {
+      const norm = normalizeIp(cfIp.trim());
+      if (norm) return norm;
+    }
+    // 2. Fallback to X-Real-IP forced by Nginx ($remote_addr restored via real_ip module)
     const realIp = req.headers['x-real-ip'];
     if (realIp && typeof realIp === 'string') {
       const norm = normalizeIp(realIp.trim());
       if (norm) return norm;
     }
+    // 3. Fallback to X-Forwarded-For
+    const xff = req.headers['x-forwarded-for'];
+    if (xff && typeof xff === 'string') {
+      const first = xff.split(',')[0].trim();
+      const norm = normalizeIp(first);
+      if (norm) return norm;
+    }
+  }
+  // Direct connection without trusted reverse proxy: strictly use real socket address
+  return socketRemote;
+}
+    // 2. Fallback to X-Real-IP forced by Nginx ($remote_addr restored via real_ip module)
+    const realIp = req.headers['x-real-ip'];
+    if (realIp && typeof realIp === 'string') {
+      const norm = normalizeIp(realIp.trim());
+      if (norm) return norm;
+    }
+    // 3. Fallback to X-Forwarded-For
+    const xff = req.headers['x-forwarded-for'];
+    if (xff && typeof xff === 'string') {
+      const first = xff.split(',')[0].trim();
+      const norm = normalizeIp(first);
+      if (norm) return norm;
+    }
+  }
+  // Direct connection without trusted reverse proxy: strictly use real socket address
+  return socketRemote;
+}
     // 2. Cloudflare authenticated connecting IP
     const cfIp = req.headers['cf-connecting-ip'];
     if (cfIp && typeof cfIp === 'string') {
