@@ -523,6 +523,19 @@ function handleDataUpdate(raw) {
       t.last_seen = d.last_seen || t.last_seen;
       if (!t.metrics) t.metrics = {};
       Object.assign(t.metrics, d);
+      if (d.traffic) t.traffic = d.traffic;
+
+      // ⚡ Direct in-place synchronization to matching state.servers entry
+      if (state.servers && Array.isArray(state.servers)) {
+        const s = state.servers.find(x => x.id === id);
+        if (s) {
+          s.status = d.status || s.status;
+          s.last_seen = d.last_seen || s.last_seen;
+          if (!s.metrics) s.metrics = {};
+          Object.assign(s.metrics, d);
+          if (d.traffic) s.traffic = d.traffic;
+        }
+      }
     }
     updateKomariDashboard();
     renderServers();
@@ -793,7 +806,7 @@ function updateKomariDashboard() {
     const t = (state.telemetry && state.telemetry[s.id]) || {};
     const isOnline = (s.status === 'online') || (t.status === 'online');
     const inf = (s.info && Object.keys(s.info).length > 0) ? s.info : (t.info || {});
-    const m = (s.metrics && Object.keys(s.metrics).length > 0) ? s.metrics : (t.metrics || {});
+    const m = (t.metrics && Object.keys(t.metrics).length > 0) ? t.metrics : (s.metrics || {});
 
     const cores = inf.cpu_cores || s.cores || 1;
     totalCores += cores;
@@ -1450,9 +1463,9 @@ function renderGrid(servers) {
 
 function updateSingleCardInPlace(card, s) {
   const t = (state.telemetry && state.telemetry[s.id]) || {};
-  const isOnline = (s.status === 'online') || (t.status === 'online');
-  const inf = (s.info && Object.keys(s.info).length > 0) ? s.info : (t.info || {});
-  const m = (s.metrics && Object.keys(s.metrics).length > 0) ? s.metrics : (t.metrics || {});
+  const isOnline = (t.status === 'online') || (s.status === 'online');
+  const inf = (t.info && Object.keys(t.info).length > 0) ? t.info : (s.info || {});
+  const m = (t.metrics && Object.keys(t.metrics).length > 0) ? t.metrics : (s.metrics || {});
 
   const cpuPct = isOnline ? Math.round(m.cpu_usage || 0) : 0;
   const memTotal = inf.mem_total || (s.memoryGB ? s.memoryGB * 1024 * 1024 * 1024 : 0);
@@ -1472,7 +1485,7 @@ function updateSingleCardInPlace(card, s) {
   const rxTotal = isOnline ? (m.net_rx_total || 0) : 0;
   const txTotal = isOnline ? (m.net_tx_total || 0) : 0;
   const bootTraffic = rxTotal + txTotal;
-  const tr = s.traffic || {};
+  const tr = (t.traffic && Object.keys(t.traffic).length > 0) ? t.traffic : (s.traffic || {});
   const lifetimeTraffic = Math.max((tr.lifetimeBytes !== undefined) ? tr.lifetimeBytes : bootTraffic, bootTraffic);
   const totalTraffic = lifetimeTraffic;
 
@@ -1529,7 +1542,7 @@ function updateSingleCardInPlace(card, s) {
   const trPct = card.querySelector('.card-traffic-pct');
   const limitGB = Number(s.trafficLimitGB) || 0;
   if (limitGB > 0 && trBar && trNum) {
-    const tr = s.traffic || {};
+    const tr = (t.traffic && Object.keys(t.traffic).length > 0) ? t.traffic : (s.traffic || {});
     const rawTotal = (m.net_rx_total || 0) + (m.net_tx_total || 0);
     const usedGB = tr.usedGB !== undefined ? tr.usedGB : +(rawTotal / (1024 * 1024 * 1024)).toFixed(2);
     const pct = tr.percent !== undefined ? tr.percent : Math.min(100, Math.round((usedGB / limitGB) * 100));
@@ -1562,8 +1575,9 @@ function updateSingleCardInPlace(card, s) {
   }
 }
 
-function renderCardTrafficBar(s, m) {
-  const tr = s.traffic || {};
+function renderCardTrafficBar(s, m, t) {
+  const nodeT = t || (state.telemetry && state.telemetry[s.id]) || {};
+  const tr = (nodeT.traffic && Object.keys(nodeT.traffic).length > 0) ? nodeT.traffic : (s.traffic || {});
   const limitGB = Number(s.trafficLimitGB) || 0;
   if (!limitGB) {
     return `
@@ -1647,7 +1661,7 @@ function buildServerCardHtml(s) {
   const t = (state.telemetry && state.telemetry[s.id]) || {};
   const isOnline = (s.status === 'online') || (t.status === 'online');
   const inf = (s.info && Object.keys(s.info).length > 0) ? s.info : (t.info || {});
-  const m = (s.metrics && Object.keys(s.metrics).length > 0) ? s.metrics : (t.metrics || {});
+  const m = (t.metrics && Object.keys(t.metrics).length > 0) ? t.metrics : (s.metrics || {});
 
   const cpuPct = isOnline ? Math.round(m.cpu_usage || 0) : 0;
   const memTotal = inf.mem_total || (s.memoryGB ? s.memoryGB * 1024 * 1024 * 1024 : 0);
@@ -1666,7 +1680,7 @@ function buildServerCardHtml(s) {
   const rxTotal = isOnline ? (m.net_rx_total || 0) : 0;
   const txTotal = isOnline ? (m.net_tx_total || 0) : 0;
   const bootTraffic = rxTotal + txTotal;
-  const tr = s.traffic || {};
+  const tr = (t.traffic && Object.keys(t.traffic).length > 0) ? t.traffic : (s.traffic || {});
   const lifetimeTraffic = Math.max((tr.lifetimeBytes !== undefined) ? tr.lifetimeBytes : bootTraffic, bootTraffic);
   const totalTraffic = lifetimeTraffic;
 
@@ -1815,7 +1829,7 @@ function buildServerCardHtml(s) {
       </div>
 
       <!-- Monthly Traffic Bar (月流量使用状态 & 充沛/适中/告急色彩) -->
-      ${renderCardTrafficBar(s, m)}
+      ${renderCardTrafficBar(s, m, t)}
 
       <!-- Live Speed & Traffic Footer -->
       <div class="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
@@ -1850,7 +1864,7 @@ function renderTable(servers) {
     const t = (state.telemetry && state.telemetry[s.id]) || {};
     const isOnline = (s.status === 'online') || (t.status === 'online');
     const inf = (s.info && Object.keys(s.info).length > 0) ? s.info : (t.info || {});
-    const m = (s.metrics && Object.keys(s.metrics).length > 0) ? s.metrics : (t.metrics || {});
+    const m = (t.metrics && Object.keys(t.metrics).length > 0) ? t.metrics : (s.metrics || {});
 
     const cpuPct = isOnline ? Math.round(m.cpu_usage || 0) : 0;
     const memTotal = inf.mem_total || 0;
@@ -1918,7 +1932,7 @@ function renderTable(servers) {
         <!-- Total Traffic & Monthly Quota -->
         <td class="py-3 px-4 font-mono text-slate-600">
           ${(() => {
-            const tr = s.traffic || {};
+            const tr = (t.traffic && Object.keys(t.traffic).length > 0) ? t.traffic : (s.traffic || {});
             const limitGB = Number(s.trafficLimitGB) || 0;
             const lifetimeBytes = Math.max((tr.lifetimeBytes !== undefined) ? tr.lifetimeBytes : (rxTotal + txTotal), (rxTotal + txTotal));
             const bootBytes = rxTotal + txTotal;
@@ -2393,7 +2407,7 @@ function updateServerDetailContent(serverId) {
   const t = state.telemetry[s.id] || {};
   const isOnline = (s.status === 'online') || (t.status === 'online');
   const inf = (s.info && Object.keys(s.info).length > 0) ? s.info : (t.info || {});
-  const m = (s.metrics && Object.keys(s.metrics).length > 0) ? s.metrics : (t.metrics || {});
+  const m = (t.metrics && Object.keys(t.metrics).length > 0) ? t.metrics : (s.metrics || {});
 
   document.getElementById('modalFlag').innerHTML = getFlagHtml(s.region, s.flag, 'w-8 h-5.5');
   document.getElementById('modalName').innerText = s.name;
@@ -2457,7 +2471,7 @@ function updateServerDetailContent(serverId) {
   // Update Monthly Traffic Card in Modal
   const trCard = document.getElementById('modalMonthlyTrafficCard');
   if (trCard) {
-    const tr = s.traffic || {};
+    const tr = (t.traffic && Object.keys(t.traffic).length > 0) ? t.traffic : (s.traffic || {});
     const limitGB = Number(s.trafficLimitGB) || 0;
     const badgeEl = document.getElementById('modalTrafficBadge');
     const barEl = document.getElementById('modalTrafficProgressBar');
@@ -2508,7 +2522,7 @@ function updateServerDetailContent(serverId) {
     }
   }
 
-  const nodeTr = s.traffic || {};
+  const nodeTr = (t.traffic && Object.keys(t.traffic).length > 0) ? t.traffic : (s.traffic || {});
   const bootRx = m.net_rx_total || 0;
   const bootTx = m.net_tx_total || 0;
   const bootTotal = bootRx + bootTx;

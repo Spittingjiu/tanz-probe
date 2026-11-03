@@ -3871,7 +3871,8 @@ function getDeltaPayload() {
       load_1: m.load_1 || 0,
       load_5: m.load_5 || 0,
       load_15: m.load_15 || 0,
-      pings: m.pings || {}
+      pings: m.pings || {},
+      traffic: calculateTrafficStats(s, t)
     };
   });
   return {
