@@ -805,8 +805,7 @@ async function submitAddNewServer(event) {
       // Show agent install command
       const cmdBox = document.getElementById('adminInstallCommands');
       const cmdText = document.getElementById('installCmdText');
-      const domain = window.location.host;
-      const cmd = `curl -sSL https://${domain}/install.sh | bash -s -- --server https://${domain} --id "${data.server.id}" --secret "${data.server.secret}"`;
+      const cmd = buildAgentInstallCmd(data.server.id, data.server.secret);
       if (cmdBox && cmdText) {
         cmdText.innerText = cmd;
         cmdBox.classList.remove('hidden');
@@ -821,10 +820,65 @@ async function submitAddNewServer(event) {
   }
 }
 
+function buildAgentInstallUrl(serverId, secret) {
+  const origin = window.location.origin;
+  return `${origin}/install.sh?id=${encodeURIComponent(serverId || '')}&secret=${encodeURIComponent(secret || '')}`;
+}
+
+function buildAgentInstallCmd(serverId, secret) {
+  const origin = window.location.origin;
+  return `curl -sSL ${origin}/install.sh | bash -s -- --server ${origin} --id "${serverId || ''}" --secret "${secret || ''}"`;
+}
+
+function updateEditInstallBox(serverId, secret) {
+  const idLabel = document.getElementById('editServerIdDisplay');
+  const cmdText = document.getElementById('editInstallCmdText');
+  const urlInput = document.getElementById('editInstallUrlText');
+  if (idLabel) idLabel.innerText = serverId || '--';
+  if (cmdText) {
+    cmdText.innerText = secret
+      ? buildAgentInstallCmd(serverId, secret)
+      : '⚠️ 尚未获取到该节点密钥，可点击下方「重置密钥」生成新的安装指令';
+  }
+  if (urlInput) {
+    urlInput.value = secret ? buildAgentInstallUrl(serverId, secret) : '';
+  }
+}
+
+function copyTextWithToast(text, successMsg) {
+  if (!text) {
+    showToast('当前没有可复制的内容', 'error');
+    return;
+  }
+  navigator.clipboard.writeText(text).then(() => {
+    showToast(successMsg, 'success');
+  }).catch(() => {
+    showToast('复制失败，请手动全选复制', 'error');
+  });
+}
+
 function copyInstallCmd() {
-  const text = document.getElementById('installCmdText').innerText;
-  navigator.clipboard.writeText(text);
-  showToast('一键部署指令已复制到剪贴板', 'success');
+  const text = document.getElementById('installCmdText')?.innerText || '';
+  copyTextWithToast(text, '一键部署指令已复制到剪贴板');
+}
+
+function copyEditInstallCmd() {
+  const s = adminState.servers.find(x => x.id === adminState.editingServerId);
+  const text = (s && s.secret) ? buildAgentInstallCmd(s.id, s.secret) : (document.getElementById('editInstallCmdText')?.innerText || '');
+  if (!s || !s.secret) {
+    showToast('当前节点密钥不可用', 'error');
+    return;
+  }
+  copyTextWithToast(text, '探针一键安装指令已复制');
+}
+
+function copyEditInstallUrl() {
+  const s = adminState.servers.find(x => x.id === adminState.editingServerId);
+  if (!s || !s.secret) {
+    showToast('当前节点密钥不可用', 'error');
+    return;
+  }
+  copyTextWithToast(buildAgentInstallUrl(s.id, s.secret), '探针安装链接已复制');
 }
 
 function openEditServerModal(serverId) {
@@ -857,6 +911,8 @@ function openEditServerModal(serverId) {
   if (trResetEl) trResetEl.value = s.trafficResetDay || 1;
   const trAlertEl = document.getElementById('editServerTrafficAlertPercent');
   if (trAlertEl) trAlertEl.value = s.trafficAlertPercent || 80;
+
+  updateEditInstallBox(s.id, s.secret);
 
   document.getElementById('editServerModal').classList.remove('hidden');
   if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
@@ -952,7 +1008,10 @@ async function resetServerSecret() {
     });
     const data = await res.json();
     if (data.ok) {
-      showToast(`新通信密钥: ${data.secret}`, 'success');
+      const targetSrv = adminState.servers.find(x => x.id === adminState.editingServerId);
+      if (targetSrv) targetSrv.secret = data.secret;
+      updateEditInstallBox(adminState.editingServerId, data.secret);
+      showToast(`新通信密钥已生成并刷新安装指令: ${data.secret}`, 'success');
       loadAdminData();
     } else {
       showToast(data.error || '重置失败', 'error');

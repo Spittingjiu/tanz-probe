@@ -827,7 +827,7 @@
   <div id="editServerModal" class="hidden fixed inset-0 z-50 overflow-y-auto" aria-modal="true">
     <div class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs transition-opacity" onclick="closeEditServerModal()"></div>
     <div class="flex min-h-full items-end sm:items-center justify-center p-0 sm:p-4">
-      <div class="relative transform overflow-hidden rounded-t-3xl sm:rounded-2xl bg-white border border-slate-200 text-left shadow-2xl transition-all w-full max-w-xl p-4 sm:p-6 space-y-4 max-h-[88vh] sm:max-h-none overflow-y-auto">
+      <div class="relative transform overflow-hidden rounded-t-3xl sm:rounded-2xl bg-white border border-slate-200 text-left shadow-2xl transition-all w-full max-w-xl p-4 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto">
         <div class="w-12 h-1 bg-slate-300 rounded-full mx-auto sm:hidden mb-1"></div>
         <div class="flex items-center justify-between border-b border-slate-100 pb-3">
           <h3 class="font-bold text-sm text-slate-900 flex items-center space-x-2">
@@ -968,6 +968,29 @@
                 <option value="90">已用 90% 预警</option>
                 <option value="95">已用 95% 预警</option>
               </select>
+            </div>
+          </div>
+
+          <!-- Agent Install Command & Direct Link -->
+          <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+              <div class="flex items-center space-x-2 min-w-0">
+                <span class="font-bold text-slate-900 text-xs">🚀 探针安装命令与链接</span>
+                <span class="text-[10px] font-mono text-slate-500">ID: <code id="editServerIdDisplay" class="text-indigo-600 font-semibold">--</code></span>
+              </div>
+              <div class="flex items-center space-x-1.5">
+                <button type="button" onclick="copyEditInstallUrl()" class="px-2.5 py-1 rounded-lg bg-white text-slate-700 border border-slate-200 font-semibold hover:bg-slate-100 text-[11px] cursor-pointer">
+                  复制安装链接
+                </button>
+                <button type="button" onclick="copyEditInstallCmd()" class="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 font-semibold hover:bg-indigo-100 text-[11px] cursor-pointer">
+                  复制一键指令
+                </button>
+              </div>
+            </div>
+            <pre id="editInstallCmdText" class="p-2.5 rounded-lg bg-slate-900 text-slate-100 font-mono text-[11px] overflow-x-auto whitespace-pre-wrap select-all"></pre>
+            <div class="flex items-center space-x-1.5 text-[11px] text-slate-500 min-w-0">
+              <span class="shrink-0 font-medium">直链:</span>
+              <input id="editInstallUrlText" type="text" readonly onclick="this.select()" class="w-full px-2 py-1 rounded-lg bg-white border border-slate-200 font-mono text-[11px] text-slate-700 select-all">
             </div>
           </div>
 
@@ -1514,7 +1537,7 @@
     </div>
   </div>
 
-  <script src="/admin.js?v=43.0"></script>
+  <script src="/admin.js?v=44.0"></script>
 
   <!-- ========================================================
        Zero-GC Engine Modal (自研 Zero-GC 高性能引擎架构与特色)

@@ -2502,8 +2502,8 @@ echo "=========================================="
 });
 
 app.get('/install.sh', (req, res) => {
-  const queryNodeId = req.query.id || '';
-  const querySecret = req.query.secret || '';
+  const queryNodeId = String(req.query.id || '').replace(/[^a-zA-Z0-9._-]/g, '');
+  const querySecret = String(req.query.secret || '').replace(/[^a-zA-Z0-9._-]/g, '');
   const host = req.get('host') || 'tanz.example.com';
   const proto = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
 
