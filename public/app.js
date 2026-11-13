@@ -1701,7 +1701,7 @@ function buildServerCardHtml(s) {
   const uptimeStr = isOnline ? formatUptime(m.uptime_seconds || m.uptime || (inf.boot_time ? Math.max(0, Date.now()/1000 - inf.boot_time) : 0)) : '离线';
 
   return `
-    <div id="node-card-${s.id}" data-node-id="${s.id}" class="node-card-item white-card rounded-2xl p-4 sm:p-5 cursor-pointer relative group flex flex-col justify-between active:scale-[0.99] transition-all hover:border-slate-300 hover:shadow-md" onclick="openServerDetail('${s.id}')">
+    <div id="node-card-${s.id}" data-node-id="${s.id}" class="node-card-item white-card rounded-2xl p-4 cursor-pointer relative group flex flex-col justify-between active:scale-[0.99] transition-all hover:border-slate-300 hover:shadow-md" onclick="openServerDetail('${s.id}')">
       <div>
         <!-- Top Row: Flag, Large Server Name, Arrow Icon & Status Pill -->
         <div class="flex items-start justify-between gap-2">
