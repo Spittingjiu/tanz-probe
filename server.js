@@ -8,6 +8,17 @@ const { execFile } = require('child_process');
 const express = require('express');
 const http = require('http');
 const { WebSocketServer, WebSocket } = require('ws');
+const {
+  hashPassword,
+  verifyPassword,
+  generateSecret,
+  validateSafeUrl,
+  normalizeIp,
+  maskIp,
+  redactConfig
+} = require('./lib/security');
+const { createSslInspector } = require('./lib/ssl');
+const { ProbeDatabase } = require('./lib/db');
 
 // Single Panel Per Machine Enforcement (单机单面板防冲突机制)
 const PID_FILE = '/tmp/tanz-probe.pid';
@@ -226,53 +237,7 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// IP Masking Utility
-function maskIp(ip, mode = 'mask') {
-  if (!ip || ip === '127.0.0.1' || ip === 'localhost') return ip;
-  if (mode === 'plain') return ip;
-  if (mode === 'full_hidden') return '***.***.***.***';
-  
-  // mode === 'mask' (Default: 1.2.3.4 -> 23.80.*.*)
-  const str = String(ip).trim();
-  const parts = str.split('.');
-  if (parts.length === 4) {
-    return `${parts[0]}.${parts[1]}.*.*`;
-  }
-  const v6 = str.split(':');
-  if (v6.length > 2) {
-    return `${v6[0]}:${v6[1]}:****:****`;
-  }
-  return '***.***.***.***';
-}
-
-// Secure Password Hashing (scrypt + constant-time comparison)
-function hashPassword(plain) {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const derived = crypto.scryptSync(String(plain), salt, 32).toString('hex');
-  return `scrypt:${salt}:${derived}`;
-}
-
-function verifyPassword(candidate, stored) {
-  if (typeof candidate !== 'string' || typeof stored !== 'string' || !candidate || !stored) {
-    return false;
-  }
-  if (stored.startsWith('scrypt:')) {
-    const parts = stored.split(':');
-    if (parts.length !== 3) return false;
-    const [, salt, hashHex] = parts;
-    try {
-      const expected = Buffer.from(hashHex, 'hex');
-      const actual = crypto.scryptSync(candidate, salt, expected.length);
-      return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
-    } catch (e) {
-      return false;
-    }
-  }
-  const a = Buffer.from(candidate);
-  const b = Buffer.from(stored);
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(a, b);
-}
+// Security helpers imported from ./lib/security
 
 // Config
 function getConfig() {
@@ -473,7 +438,7 @@ function getServers() {
         region: "US",
         flag: "🇺🇸",
         tag: "核心大鸡 / 主节点",
-        secret: "sec_la_8f912c40",
+        secret: generateSecret('sec_la', 6),
         order: 1,
         publicIp: "1.2.3.4"
       },
@@ -484,7 +449,7 @@ function getServers() {
         region: "HK",
         flag: "🇭🇰",
         tag: "亚太优选 / 低延迟",
-        secret: "sec_hk_33d71a85",
+        secret: generateSecret('sec_hk', 6),
         order: 2,
         publicIp: "103.42.183.142"
       },
@@ -495,7 +460,7 @@ function getServers() {
         region: "DE",
         flag: "🇩🇪",
         tag: "欧洲骨干网",
-        secret: "sec_de_77c29e12",
+        secret: generateSecret('sec_de', 6),
         order: 3,
         publicIp: "82.139.194.162"
       },
@@ -506,7 +471,7 @@ function getServers() {
         region: "JP",
         flag: "🇯🇵",
         tag: "东亚节点",
-        secret: "sec_jp_55e42b90",
+        secret: generateSecret('sec_jp', 6),
         order: 4,
         publicIp: "216.23.84.249"
       }
@@ -566,53 +531,24 @@ let serverRegistry = getServers();
 let pingTargets = getPingTargets();
 let provinceNodes = getProvinceNodes();
 
-// Latency Time-Series History
-// key: "nodeId:targetId" -> [ { t: timestamp_sec, lat: ms } ]
-let latencyHistory = {};
+// SQLite Time-Series Store (auto-migrates legacy JSON files once on startup)
+const UPTIME_FILE = path.join(DATA_DIR, 'uptime_history.json');
+const probeDb = new ProbeDatabase(path.join(DATA_DIR, 'probe.db'));
+probeDb.migrateFromLegacyJson({
+  metricsFile: METRICS_HISTORY_FILE,
+  latencyFile: HISTORY_FILE,
+  uptimeFile: UPTIME_FILE
+});
 
-function initLatencyHistory() {
-  if (fs.existsSync(HISTORY_FILE)) {
-    try {
-      latencyHistory = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
-      if (latencyHistory && typeof latencyHistory === 'object') return;
-    } catch (e) {}
-  }
-  latencyHistory = {};
-}
-initLatencyHistory();
+// In-memory ring buffers hydrated from SQLite for fast O(1) chart queries
+let latencyHistory = probeDb.loadLatencyHistory();
+let metricsHistory = probeDb.loadMetricsHistory();
+let uptimeHistory = probeDb.loadUptimeHistory();
 
-// Periodically save history to disk (every 2 minutes, Non-Blocking Async Atomic Write)
-async function saveLatencyHistoryAsync() {
-  try {
-    const tmp = `${HISTORY_FILE}.tmp.${Date.now()}`;
-    await fs.promises.writeFile(tmp, JSON.stringify(latencyHistory));
-    await fs.promises.rename(tmp, HISTORY_FILE);
-  } catch (e) {}
-}
-setInterval(saveLatencyHistoryAsync, 120000);
-
-let metricsHistory = {};
-
-function initMetricsHistory() {
-  if (fs.existsSync(METRICS_HISTORY_FILE)) {
-    try {
-      metricsHistory = JSON.parse(fs.readFileSync(METRICS_HISTORY_FILE, 'utf8'));
-      if (metricsHistory && typeof metricsHistory === 'object') return;
-    } catch (e) {}
-  }
-  metricsHistory = {};
-}
-initMetricsHistory();
-
-// Periodically save metricsHistory to disk (every 2 minutes, Non-Blocking Async Atomic Write)
-async function saveMetricsHistoryAsync() {
-  try {
-    const tmp = `${METRICS_HISTORY_FILE}.tmp.${Date.now()}`;
-    await fs.promises.writeFile(tmp, JSON.stringify(metricsHistory));
-    await fs.promises.rename(tmp, METRICS_HISTORY_FILE);
-  } catch (e) {}
-}
-setInterval(saveMetricsHistoryAsync, 120000);
+// Periodically prune expired SQLite records (>48h telemetry/latency, >35d uptime)
+setInterval(() => {
+  try { probeDb.pruneOldData(); } catch (e) {}
+}, 3600 * 1000);
 
 // In-memory telemetry cache
 const telemetry = new Map();
@@ -746,16 +682,7 @@ app.get('/speedtest', (req, res) => {
 // ---------------------------------------------------------------------
 // Uptime Timeline History Tracker (30 time slices per server)
 // ---------------------------------------------------------------------
-const UPTIME_FILE = path.join(DATA_DIR, 'uptime_history.json');
-let uptimeHistory = {};
-
-try {
-  if (fs.existsSync(UPTIME_FILE)) {
-    uptimeHistory = JSON.parse(fs.readFileSync(UPTIME_FILE, 'utf8'));
-  }
-} catch (e) {
-  uptimeHistory = {};
-}
+// uptimeHistory hydrated from probeDb above
 
 function getUptimeTimelineForServer(serverId, currentStatus) {
   const t = telemetry.get(serverId) || {};
@@ -781,6 +708,7 @@ function getUptimeTimelineForServer(serverId, currentStatus) {
       });
     }
     uptimeHistory[serverId] = list;
+    try { probeDb.saveUptimeList(serverId, list); } catch (e) {}
   }
   return list;
 }
@@ -806,14 +734,13 @@ function recordUptimeSnapshot(serverId, status) {
       lastBar.uptimePct = 0.0;
     }
   }
+  const latestBar = list[list.length - 1];
+  if (latestBar) {
+    try { probeDb.saveUptimeSlice(serverId, latestBar.t, latestBar.status, latestBar.uptimePct); } catch (e) {}
+  }
 }
 
-// Persist uptime history every 2 minutes
-setInterval(() => {
-  try {
-    fs.writeFileSync(UPTIME_FILE, JSON.stringify(uptimeHistory));
-  } catch (e) {}
-}, 120000);
+// Uptime snapshots persisted incrementally to SQLite
 
 // Heartbeat checker with offline grace period and recovery notification
 function checkHeartbeats() {
@@ -1000,56 +927,9 @@ function getGlobalStats() {
   };
 }
 
-// Cached Real TLS Certificate Inspector (refreshed every 10 minutes)
-let cachedSslInfo = null;
-let lastSslCheck = 0;
-function getRealSslInfo() {
-  const now = Date.now();
-  if (cachedSslInfo !== null && now - lastSslCheck < 10 * 60 * 1000) {
-    return cachedSslInfo;
-  }
-  lastSslCheck = now;
-  const candidatePaths = [
-    process.env.SSL_CERT_PATH,
-    config.sslCertPath
-  ].filter(Boolean);
-  try {
-    if (candidatePaths.length === 0 && fs.existsSync('/etc/letsencrypt/live')) {
-      const dirs = fs.readdirSync('/etc/letsencrypt/live', { withFileTypes: true });
-      for (const d of dirs) {
-        if (d.isDirectory() || d.isSymbolicLink()) {
-          candidatePaths.push(path.join('/etc/letsencrypt/live', d.name, 'fullchain.pem'));
-        }
-      }
-    }
-  } catch (e) {}
-  for (const certPath of candidatePaths) {
-    try {
-      if (fs.existsSync(certPath) && typeof crypto.X509Certificate === 'function') {
-        const pem = fs.readFileSync(certPath);
-        const x509 = new crypto.X509Certificate(pem);
-        const validToMs = Date.parse(x509.validTo);
-        const daysRemaining = isNaN(validToMs) ? null : Math.max(0, Math.ceil((validToMs - now) / 86400000));
-        const cnMatch = /CN=([^\n,]+)/.exec(x509.subject || '');
-        const issuerMatch = /O=([^\n,]+)/.exec(x509.issuer || '') || /CN=([^\n,]+)/.exec(x509.issuer || '');
-        const expiresAt = isNaN(validToMs) ? '' : new Date(validToMs).toISOString().slice(0, 10);
-        cachedSslInfo = {
-          domain: config.domain || (cnMatch ? (cnMatch[1].trim().startsWith('*.') ? cnMatch[1].trim() : `*.${cnMatch[1].trim()}`) : 'localhost'),
-          status: daysRemaining !== null && daysRemaining > 14 ? 'healthy' : 'warning',
-          statusText: daysRemaining !== null && daysRemaining > 14 ? '证书健康生效中' : '证书即将过期',
-          issuer: issuerMatch ? issuerMatch[1].trim() : "Let's Encrypt",
-          daysRemaining: daysRemaining ?? 0,
-          expiresAt
-        };
-        return cachedSslInfo;
-      }
-    } catch (e) {}
-  }
-  cachedSslInfo = undefined;
-  return null;
-}
+// Cached Real TLS Certificate Inspector (delegated to ./lib/ssl)
+const getRealSslInfo = createSslInspector(() => config);
 
-// Build Full Payload
 function getFullPayload() {
   const ipMode = config.hideIpMode || 'mask';
   const serversData = serverRegistry.map(s => {
@@ -1127,7 +1007,7 @@ app.post('/api/servers/add-public', requireAdmin, (req, res) => {
     return res.status(400).json({ error: '节点 ID 已存在，请更换一个 ID' });
   }
 
-  const secret = 'sec_' + Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+  const secret = generateSecret('sec', 8);
   const masterUrl = req.protocol + '://' + (req.get('host') || '127.0.0.1:3000');
 
   const newServer = {
@@ -2413,10 +2293,12 @@ app.post('/api/report', (req, res) => {
       swap: currentSwap
     });
     if (mHistArr.length > 2880) mHistArr.shift();
+    try { probeDb.saveMetricPoint(nodeId, mBucketTime, currentCpu, currentMem, currentSwap); } catch (e) {}
   } else if (lastMPoint.t === mBucketTime) {
     lastMPoint.cpu = currentCpu;
     lastMPoint.mem = currentMem;
     lastMPoint.swap = currentSwap;
+    try { probeDb.saveMetricPoint(nodeId, mBucketTime, currentCpu, currentMem, currentSwap); } catch (e) {}
   }
 
   // Record Ping History for 1h/6h/12h/24h charts
@@ -2429,12 +2311,14 @@ app.post('/api/report', (req, res) => {
       if (!latencyHistory[key]) latencyHistory[key] = [];
       const historyArr = latencyHistory[key];
       const last = historyArr[historyArr.length - 1];
+      const latNum = Number(lat) || -1;
       if (!last || last.t < bucketTime) {
-        historyArr.push({ t: bucketTime, lat: Number(lat) || -1 });
-        // Max 2880 entries (covers up to 24-48 hours)
+        historyArr.push({ t: bucketTime, lat: latNum });
         if (historyArr.length > 2880) historyArr.shift();
+        try { probeDb.saveLatencyPoint(nodeId, tid, bucketTime, latNum); } catch (e) {}
       } else if (last.t === bucketTime) {
-        last.lat = Number(lat) || -1;
+        last.lat = latNum;
+        try { probeDb.saveLatencyPoint(nodeId, tid, bucketTime, latNum); } catch (e) {}
       }
     }
   }
@@ -2711,18 +2595,7 @@ app.get('/agent.py', (req, res) => {
 // Security Gateway: Login Circuit Breaker & Anti-Brute-Force System
 // ---------------------------------------------------------------------
 
-function normalizeIp(ip) {
-  if (!ip) return '';
-  let str = String(ip).trim();
-  if (str.startsWith('::ffff:')) {
-    str = str.replace('::ffff:', '');
-  }
-  if (/^\d+\.\d+\.\d+\.\d+:\d+$/.test(str)) {
-    str = str.split(':')[0];
-  }
-  return str.trim();
-}
-
+// normalizeIp imported from ./lib/security
 function getClientIp(req) {
   const socketRemote = normalizeIp(req.socket.remoteAddress || '127.0.0.1');
   // Strict Proxy Anti-Spoofing: Only trust proxy headers if request originated from local reverse proxy
@@ -3263,7 +3136,7 @@ app.get('/api/admin/servers', requireAdmin, (req, res) => {
   });
   res.json({ 
     servers: enrichedServers, 
-    config, 
+    config: redactConfig(config), 
     pingTargets, 
     provinceNodes,
     auditLogs
@@ -3440,6 +3313,38 @@ app.post('/api/admin/servers/:id/reset-secret', requireAdmin, (req, res) => {
 
 // Delete server
 // Remote Uninstall Agent from Server
+// Remote Self-Update Agent Trigger (Single & All)
+app.post('/api/admin/servers/:id/update-agent', requireAdmin, (req, res) => {
+  const id = req.params.id;
+  const targetServer = serverRegistry.find(s => s.id === id);
+  if (!targetServer) {
+    return res.status(404).json({ error: 'Server not found' });
+  }
+  pendingActions.set(id, 'update');
+  addAuditLog('info', `向节点 [${targetServer.name}] 下发 Agent 在线升级指令 (目标版本 v2.1.0)`);
+  res.json({
+    ok: true,
+    message: `已向节点 [${targetServer.name}] 下发升级指令，探针将在下次心跳时拉取最新二进制并自动重启`
+  });
+});
+
+app.post('/api/admin/servers/update-all-agents', requireAdmin, (req, res) => {
+  let count = 0;
+  for (const s of serverRegistry) {
+    const t = telemetry.get(s.id);
+    if (t && t.status === 'online') {
+      pendingActions.set(s.id, 'update');
+      count++;
+    }
+  }
+  addAuditLog('info', `向 ${count} 台在线节点下发 Agent 批量在线升级指令`);
+  res.json({
+    ok: true,
+    count,
+    message: `已向 ${count} 台在线节点下发升级指令（仅 v2.1.0+ 支持在线自升级，旧版请使用编辑弹窗一键脚本更新）`
+  });
+});
+
 app.post('/api/admin/servers/:id/uninstall', requireAdmin, (req, res) => {
   const id = req.params.id;
   const targetServer = serverRegistry.find(s => s.id === id);
@@ -3469,6 +3374,7 @@ app.delete('/api/admin/servers/:id', requireAdmin, (req, res) => {
   for (const key of Object.keys(latencyHistory)) {
     if (key.startsWith(id + ':')) delete latencyHistory[key];
   }
+  try { probeDb.deleteServerData(id); } catch (e) {}
   saveTrafficState();
   saveServers(serverRegistry);
   broadcastTelemetry(true);
@@ -3557,6 +3463,7 @@ app.delete('/api/admin/targets/:id', requireAdmin, (req, res) => {
   for (const key of Object.keys(latencyHistory)) {
     if (key.endsWith(':' + id)) delete latencyHistory[key];
   }
+  try { probeDb.deleteTargetData(id); } catch (e) {}
   savePingTargets(pingTargets);
   broadcastTelemetry(true);
   addAuditLog('warn', `删除测速目标: [${target ? target.name : id}]`);
@@ -3567,7 +3474,7 @@ app.delete('/api/admin/targets/:id', requireAdmin, (req, res) => {
 app.post('/api/admin/targets/test-ping', requireAdmin, (req, res) => {
   const { host } = req.body;
   if (!host) return res.status(400).json({ error: 'Missing host' });
-  const cleanHost = String(host).split(':')[0].trim();
+  const rawTH = String(host).trim(); const cleanHost = /^\[.*\](:\d+)?$/.test(rawTH) ? rawTH.replace(/^\[([^\]]+)\].*$/, '$1') : (rawTH.split(':').length === 2 ? rawTH.split(':')[0] : rawTH);
 
   execFile('ping', ['-c', '1', '-W', '2', cleanHost], (err, stdout) => {
     if (err) {
@@ -3656,9 +3563,7 @@ app.post('/api/admin/targets/toggle-province', requireAdmin, (req, res) => {
 
 // System Settings API
 app.get('/api/admin/config', requireAdmin, (req, res) => {
-  const safeConfig = { ...config };
-  delete safeConfig.adminPassword;
-  res.json({ ok: true, config: safeConfig });
+  res.json({ ok: true, config: redactConfig(config) });
 });
 
 app.post('/api/admin/config', requireAdmin, (req, res) => {
@@ -3683,7 +3588,7 @@ app.post('/api/admin/config', requireAdmin, (req, res) => {
   saveConfig(config);
   broadcastTelemetry();
   addAuditLog('info', `保存全局系统设置 (IP脱敏: ${config.hideIpMode}, 测速周期: ${config.pingIntervalSec}s)`);
-  res.json({ ok: true, config });
+  res.json({ ok: true, config: redactConfig(config) });
 });
 
 // Change Password API
@@ -3724,6 +3629,7 @@ app.get('/api/admin/audit-logs', requireAdmin, (req, res) => {
 // Flush Latency Cache
 app.post('/api/admin/flush-cache', requireAdmin, (req, res) => {
   latencyHistory = {};
+  try { probeDb.clearLatencyHistory(); } catch (e) {}
   try {
     if (fs.existsSync(HISTORY_FILE)) fs.unlinkSync(HISTORY_FILE);
   } catch (e) {}
@@ -3733,8 +3639,7 @@ app.post('/api/admin/flush-cache', requireAdmin, (req, res) => {
 
 // Export Backup API
 app.get('/api/admin/export-backup', requireAdmin, (req, res) => {
-  const safeCfg = { ...config };
-  delete safeCfg.adminPassword;
+  const safeCfg = redactConfig(config);
   res.setHeader('Content-Disposition', 'attachment; filename="tanz-probe-backup.json"');
   res.setHeader('Content-Type', 'application/json');
   res.json({
@@ -3900,6 +3805,7 @@ function broadcastTelemetry(forceFull = false) {
 
 function handleShutdown() {
   saveTrafficStateSync();
+  try { probeDb.close(); } catch (e) {}
   process.exit(0);
 }
 process.on('SIGINT', handleShutdown);

@@ -4,7 +4,8 @@
   "description": "Enterprise Zero-GC Cloud Fleet Observer and Network Topology Monitor",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
   },
   "repository": {
     "type": "git",

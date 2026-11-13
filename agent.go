@@ -25,6 +25,8 @@ import (
 	"time"
 )
 
+const AgentVersion = "2.1.0"
+
 type Config struct {
 	NodeID     string  `json:"nodeId"`
 	NodeSecret string  `json:"nodeSecret"`
@@ -87,6 +89,7 @@ type StaticInfo struct {
 	MemTotal       uint64                 `json:"mem_total"`
 	SwapTotal      uint64                 `json:"swap_total"`
 	DiskTotal      uint64                 `json:"disk_total"`
+	AgentVersion   string                 `json:"agent_version"`
 	BootTime       int64                  `json:"boot_time"`
 	Unlocks        map[string]interface{} `json:"unlocks"`
 	Routes         map[string]string      `json:"routes"`
@@ -142,9 +145,9 @@ var (
 	unlockMu      sync.RWMutex
 	routeMu      sync.RWMutex
 	routeResults = map[string]string{
-		"telecom": "电信 163",
-		"unicom":  "联通 4837",
-		"mobile":  "移动 CMI",
+		"telecom": "检测中...",
+		"unicom":  "检测中...",
+		"mobile":  "检测中...",
 	}
 
 	unlockResults = map[string]interface{}{
@@ -231,6 +234,7 @@ func initStaticInfo() {
 	}
 
 	staticInfo = StaticInfo{
+		AgentVersion:   AgentVersion,
 		Hostname:       hostname,
 		Kernel:         kernel,
 		Arch:           arch,
@@ -542,6 +546,210 @@ func mathRound(val float64, prec int) float64 {
 	return float64(int(val*pow+0.5)) / pow
 }
 
+func extractPingHost(rawHost string) string {
+	cleanHost := strings.TrimSpace(rawHost)
+	if hostOnly, _, err := net.SplitHostPort(cleanHost); err == nil {
+		cleanHost = hostOnly
+	}
+	return strings.Trim(cleanHost, "[]")
+}
+
+func classifyTelecomRoute(out string) string {
+	if out == "" {
+		return "未知"
+	}
+	if strings.Contains(out, "59.43.") {
+		if strings.Contains(out, "202.97.") {
+			return "电信 CN2 GT"
+		}
+		return "电信 CN2 GIA"
+	}
+	if strings.Contains(out, "202.97.") {
+		return "电信 163"
+	}
+	if strings.Contains(out, "218.105.") || strings.Contains(out, "210.51.") {
+		return "电信 9929"
+	}
+	if strings.Contains(out, "113.96.") || strings.Contains(out, "14.14.") || strings.Contains(out, "183.6.") {
+		return "电信 直连"
+	}
+	return "电信 163"
+}
+
+func classifyUnicomRoute(out string) string {
+	if out == "" {
+		return "未知"
+	}
+	if strings.Contains(out, "218.105.") || strings.Contains(out, "210.51.") {
+		return "联通 9929"
+	}
+	if strings.Contains(out, "219.158.") {
+		return "联通 4837"
+	}
+	if strings.Contains(out, "139.226.") || strings.Contains(out, "112.64.") {
+		return "联通 直连"
+	}
+	return "联通 4837"
+}
+
+func classifyMobileRoute(out string) string {
+	if out == "" {
+		return "未知"
+	}
+	if strings.Contains(out, "223.119.") {
+		return "移动 CMIN2"
+	}
+	if strings.Contains(out, "223.120.") {
+		return "移动 CMI"
+	}
+	if strings.Contains(out, "221.183.") {
+		return "移动 9808"
+	}
+	if strings.Contains(out, "120.196.") || strings.Contains(out, "120.241.") {
+		return "移动 直连"
+	}
+	return "移动 CMI"
+}
+
+func evaluateUnlockStatus(service string, code int, body string, finalURL string) string {
+	switch service {
+	case "youtube":
+		if code == 200 && !strings.Contains(body, "Premium is not available in your country") {
+			return "原生支持"
+		}
+		return "不可用"
+	case "netflix":
+		if code == 200 && !strings.Contains(body, "Oh no!") {
+			return "原生解锁"
+		}
+		if code == 403 || code == 404 {
+			return "仅自制剧"
+		}
+		return "不可用"
+	case "disney":
+		if code == 200 && !strings.Contains(finalURL, "unavailable") && !strings.Contains(body, "not available in your region") {
+			return "支持"
+		}
+		if code == 403 {
+			return "限制访问"
+		}
+		return "不可用"
+	case "chatgpt":
+		if code == 200 && !strings.Contains(body, "cf-browser-verification") && !strings.Contains(finalURL, "unsupported") {
+			return "可用"
+		}
+		if code == 403 {
+			return "限制访问"
+		}
+		return "不可用"
+	case "claude":
+		if code == 200 && !strings.Contains(finalURL, "app-unavailable") && !strings.Contains(body, "app-unavailable") {
+			return "原生解锁"
+		}
+		if code == 403 {
+			return "限制访问"
+		}
+		return "不可用"
+	default:
+		return "未知"
+	}
+}
+
+func resolveAgentBinaryName(goos, goarch string) string {
+	if goos == "darwin" {
+		if goarch == "arm64" {
+			return "tanz-agent-darwin-arm64"
+		}
+		return "tanz-agent-darwin-amd64"
+	}
+	switch goarch {
+	case "arm64":
+		return "tanz-agent-linux-arm64"
+	case "arm":
+		return "tanz-agent-linux-armv7"
+	default:
+		return "tanz-agent-linux-amd64"
+	}
+}
+
+func isValidExecutableHeader(goos string, hdr []byte) bool {
+	if len(hdr) < 4 {
+		return false
+	}
+	if goos == "darwin" {
+		// Mach-O 64-bit BE/LE or Universal binary
+		if hdr[0] == 0xCF && hdr[1] == 0xFA && hdr[2] == 0xED && hdr[3] == 0xFE {
+			return true
+		}
+		if hdr[0] == 0xFE && hdr[1] == 0xED && hdr[2] == 0xFA && hdr[3] == 0xCF {
+			return true
+		}
+		return hdr[0] == 0xCA && hdr[1] == 0xFE && hdr[2] == 0xBA && hdr[3] == 0xBE
+	}
+	return hdr[0] == 0x7F && hdr[1] == 'E' && hdr[2] == 'L' && hdr[3] == 'F'
+}
+
+func performSelfUpdate(masterURL string) error {
+	exePath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+		exePath = resolved
+	}
+	binName := resolveAgentBinaryName(runtime.GOOS, runtime.GOARCH)
+	downloadURL := strings.TrimRight(masterURL, "/") + "/" + binName
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Get(downloadURL)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+	}
+
+	tmpPath := exePath + ".update.tmp"
+	out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return err
+	}
+	n, copyErr := io.Copy(out, resp.Body)
+	closeErr := out.Close()
+	if copyErr != nil {
+		_ = os.Remove(tmpPath)
+		return copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmpPath)
+		return closeErr
+	}
+	if n < 500*1024 {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("downloaded binary too small (%d bytes)", n)
+	}
+
+	hdr := make([]byte, 4)
+	f, err := os.Open(tmpPath)
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	_, _ = io.ReadFull(f, hdr)
+	_ = f.Close()
+
+	if !isValidExecutableHeader(runtime.GOOS, hdr) {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("invalid executable magic header")
+	}
+	if err := os.Rename(tmpPath, exePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
+}
+
 // Ping Worker
 func startPingWorker(nodeID string) {
 	timeReg := regexp.MustCompile(`time=([0-9\.]+)\s*ms`)
@@ -585,11 +793,7 @@ func startPingWorker(nodeID string) {
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				cleanHost := strings.TrimSpace(tgt.Host)
-				if hostOnly, _, err := net.SplitHostPort(cleanHost); err == nil {
-					cleanHost = hostOnly
-				}
-				cleanHost = strings.Trim(cleanHost, "[]")
+				cleanHost := extractPingHost(tgt.Host)
 				cmd := exec.Command("ping", "-c", "1", "-W", "1", cleanHost)
 				out, err := cmd.CombinedOutput()
 				lat := -1.0
@@ -643,58 +847,11 @@ func runTraceroute(target string) string {
 
 func startRouteWorker() {
 	checkRoutes := func() {
-		results := make(map[string]string)
-
-		// 1. Telecom (CT) - Guangzhou Telecom: 113.108.209.1
-		outCT := runTraceroute("113.108.209.1")
-		if outCT == "" {
-			results["telecom"] = "未知"
-		} else if strings.Contains(outCT, "59.43.") {
-			if strings.Contains(outCT, "202.97.") {
-				results["telecom"] = "电信 CN2 GT"
-			} else {
-				results["telecom"] = "电信 CN2 GIA"
-			}
-		} else if strings.Contains(outCT, "202.97.") {
-			results["telecom"] = "电信 163"
-		} else if strings.Contains(outCT, "218.105.") || strings.Contains(outCT, "210.51.") {
-			results["telecom"] = "电信 9929"
-		} else if strings.Contains(outCT, "113.96.") || strings.Contains(outCT, "14.14.") || strings.Contains(outCT, "183.6.") {
-			results["telecom"] = "电信 直连"
-		} else {
-			results["telecom"] = "电信 163"
+		results := map[string]string{
+			"telecom": classifyTelecomRoute(runTraceroute("113.108.209.1")),
+			"unicom":  classifyUnicomRoute(runTraceroute("210.22.80.1")),
+			"mobile":  classifyMobileRoute(runTraceroute("120.196.165.24")),
 		}
-
-		// 2. Unicom (CU) - Shanghai Unicom: 210.22.80.1
-		outCU := runTraceroute("210.22.80.1")
-		if outCU == "" {
-			results["unicom"] = "未知"
-		} else if strings.Contains(outCU, "218.105.") || strings.Contains(outCU, "210.51.") {
-			results["unicom"] = "联通 9929"
-		} else if strings.Contains(outCU, "219.158.") {
-			results["unicom"] = "联通 4837"
-		} else if strings.Contains(outCU, "139.226.") || strings.Contains(outCU, "112.64.") {
-			results["unicom"] = "联通 直连"
-		} else {
-			results["unicom"] = "联通 4837"
-		}
-
-		// 3. Mobile (CM) - Guangzhou Mobile: 120.196.165.24
-		outCM := runTraceroute("120.196.165.24")
-		if outCM == "" {
-			results["mobile"] = "未知"
-		} else if strings.Contains(outCM, "223.119.") {
-			results["mobile"] = "移动 CMIN2"
-		} else if strings.Contains(outCM, "223.120.") {
-			results["mobile"] = "移动 CMI"
-		} else if strings.Contains(outCM, "221.183.") {
-			results["mobile"] = "移动 9808"
-		} else if strings.Contains(outCM, "120.196.") || strings.Contains(outCM, "120.241.") {
-			results["mobile"] = "移动 直连"
-		} else {
-			results["mobile"] = "移动 CMI"
-		}
-
 		routeMu.Lock()
 		routeResults = results
 		routeMu.Unlock()
@@ -737,70 +894,25 @@ func startUnlockWorker() {
 		Timeout: 8 * time.Second,
 	}
 
+	targets := []struct {
+		name string
+		url  string
+	}{
+		{"youtube", "https://www.youtube.com/premium"},
+		{"netflix", "https://www.netflix.com/title/80018499"},
+		{"disney", "https://www.disneyplus.com"},
+		{"chatgpt", "https://chatgpt.com"},
+		{"claude", "https://claude.ai"},
+	}
+
 	checkAll := func() {
-		results := make(map[string]interface{})
-
-		// YouTube
-		if code, body, _, err := probeUnlockURL(client, "https://www.youtube.com/premium"); err == nil {
-			if code == 200 && !strings.Contains(body, "Premium is not available in your country") {
-				results["youtube"] = "原生支持"
+		results := make(map[string]interface{}, len(targets))
+		for _, t := range targets {
+			if code, body, finalURL, err := probeUnlockURL(client, t.url); err == nil {
+				results[t.name] = evaluateUnlockStatus(t.name, code, body, finalURL)
 			} else {
-				results["youtube"] = "不可用"
+				results[t.name] = "超时"
 			}
-		} else {
-			results["youtube"] = "超时"
-		}
-
-		// Netflix
-		if code, body, _, err := probeUnlockURL(client, "https://www.netflix.com/title/80018499"); err == nil {
-			if code == 200 && !strings.Contains(body, "Oh no!") {
-				results["netflix"] = "原生解锁"
-			} else if code == 403 || code == 404 {
-				results["netflix"] = "仅自制剧"
-			} else {
-				results["netflix"] = "不可用"
-			}
-		} else {
-			results["netflix"] = "超时"
-		}
-
-		// Disney+
-		if code, body, finalURL, err := probeUnlockURL(client, "https://www.disneyplus.com"); err == nil {
-			if code == 200 && !strings.Contains(finalURL, "unavailable") && !strings.Contains(body, "not available in your region") {
-				results["disney"] = "支持"
-			} else if code == 403 {
-				results["disney"] = "限制访问"
-			} else {
-				results["disney"] = "不可用"
-			}
-		} else {
-			results["disney"] = "超时"
-		}
-
-		// ChatGPT (403 indicates Cloudflare/IP block, not available)
-		if code, body, finalURL, err := probeUnlockURL(client, "https://chatgpt.com"); err == nil {
-			if code == 200 && !strings.Contains(body, "cf-browser-verification") && !strings.Contains(finalURL, "unsupported") {
-				results["chatgpt"] = "可用"
-			} else if code == 403 {
-				results["chatgpt"] = "限制访问"
-			} else {
-				results["chatgpt"] = "不可用"
-			}
-		} else {
-			results["chatgpt"] = "超时"
-		}
-
-		// Claude (403 indicates Cloudflare/region block)
-		if code, body, finalURL, err := probeUnlockURL(client, "https://claude.ai"); err == nil {
-			if code == 200 && !strings.Contains(finalURL, "app-unavailable") && !strings.Contains(body, "app-unavailable") {
-				results["claude"] = "原生解锁"
-			} else if code == 403 {
-				results["claude"] = "限制访问"
-			} else {
-				results["claude"] = "不可用"
-			}
-		} else {
-			results["claude"] = "超时"
 		}
 
 		unlockMu.Lock()
@@ -861,7 +973,7 @@ func main() {
 	}
 	cfg.MasterURL = strings.TrimRight(cfg.MasterURL, "/")
 
-	fmt.Printf("⚡ [Tanz Binary Agent v2.0] Starting for [%s] -> %s\n", cfg.NodeID, cfg.MasterURL)
+	fmt.Printf("⚡ [Tanz Binary Agent v%s] Starting for [%s] -> %s\n", AgentVersion, cfg.NodeID, cfg.MasterURL)
 
 	initStaticInfo()
 	prevCPUTotal, prevCPUIdle = readCPURaw()
@@ -923,7 +1035,7 @@ func main() {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Node-ID", cfg.NodeID)
 		req.Header.Set("X-Node-Secret", cfg.NodeSecret)
-		req.Header.Set("User-Agent", "TanzBinaryAgent/2.0 (Zero-GC MicroCore)")
+		req.Header.Set("User-Agent", "TanzBinaryAgent/" + AgentVersion + " (Zero-GC MicroCore)")
 
 		resp, err := httpClient.Do(req)
 		if err != nil {
@@ -951,6 +1063,24 @@ func main() {
 				}
 				reportURL = strings.TrimRight(cfg.MasterURL, "/") + "/api/report"
 				needInfo = true
+				continue
+			}
+			if mResp.Action == "update" {
+				if !verifyActionSignature(mResp.Action, cfg.NodeID, cfg.NodeSecret, mResp.TargetMasterUrl, mResp.Timestamp, mResp.Sig) {
+					fmt.Printf("🚨 [SECURITY ALERT] Untrusted or forged 'update' command rejected! HMAC signature verification failed.\n")
+					continue
+				}
+				baseURL := cfg.MasterURL
+				if mResp.TargetMasterUrl != "" {
+					baseURL = mResp.TargetMasterUrl
+				}
+				fmt.Printf("🔄 [Tanz Agent] Validated signed self-update command from %s, downloading v...\n", baseURL)
+				if err := performSelfUpdate(baseURL); err != nil {
+					fmt.Printf("[WARN] Self-update failed: %v\n", err)
+				} else {
+					fmt.Println("✅ [Tanz Agent] Binary updated successfully, exiting for service manager restart...")
+					os.Exit(0)
+				}
 				continue
 			}
 			if mResp.Action == "uninstall" {

@@ -26,3 +26,7 @@ data/*.json
 .DS_Store
 server.js.bak
 server.js.backup*
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.bak

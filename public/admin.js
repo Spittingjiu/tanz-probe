@@ -616,6 +616,8 @@ function renderAdminServerList() {
               <span>·</span>
               ${virtBadge}
               <span>·</span>
+              <span class="px-1.5 py-0.2 rounded text-[10px] border ${inf.agent_version ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}">Agent: ${inf.agent_version ? 'v' + inf.agent_version : '旧版'}</span>
+              <span>·</span>
               <span class="text-slate-400">密钥: ${s.secret ? s.secret.substring(0, 8) + '...' : '--'}</span>
               <span>·</span>
               ${(() => {
@@ -646,6 +648,9 @@ function renderAdminServerList() {
             <button onclick="event.stopPropagation(); openAdminServerDetail('${s.id}')" class="px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs transition-colors cursor-pointer flex items-center space-x-1" title="查看该服务器的详细指标与服务探活">
               <i data-lucide="activity" class="w-3.5 h-3.5"></i>
               <span>探活</span>
+            </button>
+            <button onclick="event.stopPropagation(); triggerAgentUpdate('${s.id}')" class="px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-semibold text-xs transition-colors cursor-pointer" title="向该节点下发 Agent 在线升级指令">
+              🔄 升级
             </button>
             <button onclick="event.stopPropagation(); openEditServerModal('${s.id}')" class="px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition-colors cursor-pointer">
               ✏️ 编辑
@@ -1018,6 +1023,48 @@ async function resetServerSecret() {
     }
   } catch (err) {
     showToast('重置密钥失败', 'error');
+  }
+}
+
+async function triggerAgentUpdate(id) {
+  if (!confirm(`确定向节点 [${id}] 下发 Agent 在线升级指令吗？\n（仅 v2.1.0+ 支持热更新；旧版请点击「编辑」使用一键安装指令升级）`)) return;
+  try {
+    const res = await fetch(`/api/admin/servers/${id}/update-agent`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-token': adminState.adminToken
+      }
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      showToast(data.message || '升级指令已下发', 'success');
+    } else {
+      showToast(data.error || '下发升级失败', 'error');
+    }
+  } catch (err) {
+    showToast('请求失败: ' + err.message, 'error');
+  }
+}
+
+async function triggerUpdateAllAgents() {
+  if (!confirm('确定向所有在线节点下发 Agent 在线升级指令吗？')) return;
+  try {
+    const res = await fetch('/api/admin/servers/update-all-agents', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-token': adminState.adminToken
+      }
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      showToast(data.message || '批量升级指令已下发', 'success');
+    } else {
+      showToast(data.error || '批量升级失败', 'error');
+    }
+  } catch (err) {
+    showToast('请求失败: ' + err.message, 'error');
   }
 }
 
@@ -1579,8 +1626,9 @@ async function loadSystemSettings() {
     });
     if (!res.ok) return;
     const data = await res.json();
-    document.getElementById('settingSiteTitle').value = data.siteTitle || 'Tanz Probe';
-    document.getElementById('settingSiteSubtitle').value = data.siteSubtitle || '';
+    const cfg = data.config || data || {};
+    document.getElementById('settingSiteTitle').value = cfg.siteTitle || 'Tanz Probe';
+    document.getElementById('settingSiteSubtitle').value = cfg.siteSubtitle || '';
   } catch (err) {
     console.error('Failed to load system settings:', err);
   }
@@ -1590,6 +1638,7 @@ async function saveSystemSettings(event) {
   event.preventDefault();
   const siteTitle = document.getElementById('settingSiteTitle').value.trim();
   const siteSubtitle = document.getElementById('settingSiteSubtitle').value.trim();
+  const oldPassword = (document.getElementById('settingOldPassword')?.value || '').trim();
   const newPassword = document.getElementById('settingNewPassword').value.trim();
 
   try {
@@ -1605,13 +1654,17 @@ async function saveSystemSettings(event) {
     }
 
     if (newPassword) {
+      if (!oldPassword) {
+        showToast('修改密码时请输入当前原密码', 'error');
+        return;
+      }
       const res = await fetch('/api/admin/change-password', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-admin-token': adminState.adminToken
         },
-        body: JSON.stringify({ oldPassword: adminState.adminToken, newPassword })
+        body: JSON.stringify({ oldPassword, newPassword })
       });
       const data = await res.json();
       if (data.ok) {
