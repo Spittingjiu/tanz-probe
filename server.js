@@ -60,16 +60,32 @@ for (const [id, ts] of Object.entries(trafficState)) {
   }
 }
 let trafficSaveTimer = null;
+let trafficWriteInFlight = false;
+function saveTrafficStateSync() {
+  try {
+    const tmp = `${TRAFFIC_STATE_FILE}.tmp.${process.pid}`;
+    fs.writeFileSync(tmp, JSON.stringify(trafficState, null, 2));
+    fs.renameSync(tmp, TRAFFIC_STATE_FILE);
+  } catch (e) {
+    console.error('Error saving traffic_state.json:', e);
+  }
+}
 function saveTrafficState() {
   if (trafficSaveTimer) return;
-  trafficSaveTimer = setTimeout(() => {
+  trafficSaveTimer = setTimeout(async () => {
     trafficSaveTimer = null;
+    if (trafficWriteInFlight) return;
+    trafficWriteInFlight = true;
     try {
-      fs.writeFileSync(TRAFFIC_STATE_FILE, JSON.stringify(trafficState, null, 2));
+      const tmp = `${TRAFFIC_STATE_FILE}.tmp.${Date.now()}`;
+      await fs.promises.writeFile(tmp, JSON.stringify(trafficState, null, 2));
+      await fs.promises.rename(tmp, TRAFFIC_STATE_FILE);
     } catch (e) {
       console.error('Error saving traffic_state.json:', e);
+    } finally {
+      trafficWriteInFlight = false;
     }
-  }, 3000);
+  }, 15000);
 }
 
 function getCycleInfo(resetDay = 1, nowDate = new Date()) {
@@ -229,17 +245,48 @@ function maskIp(ip, mode = 'mask') {
   return '***.***.***.***';
 }
 
+// Secure Password Hashing (scrypt + constant-time comparison)
+function hashPassword(plain) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derived = crypto.scryptSync(String(plain), salt, 32).toString('hex');
+  return `scrypt:${salt}:${derived}`;
+}
+
+function verifyPassword(candidate, stored) {
+  if (typeof candidate !== 'string' || typeof stored !== 'string' || !candidate || !stored) {
+    return false;
+  }
+  if (stored.startsWith('scrypt:')) {
+    const parts = stored.split(':');
+    if (parts.length !== 3) return false;
+    const [, salt, hashHex] = parts;
+    try {
+      const expected = Buffer.from(hashHex, 'hex');
+      const actual = crypto.scryptSync(candidate, salt, expected.length);
+      return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+    } catch (e) {
+      return false;
+    }
+  }
+  const a = Buffer.from(candidate);
+  const b = Buffer.from(stored);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 // Config
 function getConfig() {
   if (!fs.existsSync(CONFIG_FILE)) {
+    const rawPass = 'tanz_admin_' + crypto.randomBytes(6).toString('hex');
+    console.log(`🔑 Initialized new admin password (one-time notice): ${rawPass}`);
     const defaultCfg = {
-      adminPassword: 'tanz_admin_' + crypto.randomBytes(4).toString('hex'),
+      adminPassword: hashPassword(rawPass),
       reportIntervalSec: 2,
-      pingIntervalSec: 3, // Default 3s ping frequency
+      pingIntervalSec: 3,
       historyMaxPoints: 40,
       offlineThresholdSec: 10,
-      hideIpMode: 'mask', // 'mask' | 'full_hidden' | 'plain'
-      siteTitle: 'Tarnz Probe · 全球分布式服务器监控云探针',
+      hideIpMode: 'mask',
+      siteTitle: 'Tanz Probe · 全球分布式服务器监控云探针',
       siteSubtitle: 'Debian Linux 高性能分布式监控与全网测速',
       theme: 'aurora',
       telegramEnabled: false,
@@ -258,7 +305,7 @@ function getConfig() {
     const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
     if (!cfg.pingIntervalSec) cfg.pingIntervalSec = 3;
     if (!cfg.hideIpMode) cfg.hideIpMode = 'mask';
-    if (!cfg.siteTitle) cfg.siteTitle = 'Tarnz Probe · 全球分布式服务器监控云探针';
+    if (!cfg.siteTitle) cfg.siteTitle = 'Tanz Probe · 全球分布式服务器监控云探针';
     if (!cfg.siteSubtitle) cfg.siteSubtitle = 'Debian Linux 高性能分布式监控与全网测速';
     if (!cfg.theme) cfg.theme = 'aurora';
     if (cfg.telegramEnabled === undefined) cfg.telegramEnabled = false;
@@ -266,16 +313,21 @@ function getConfig() {
     if (cfg.webhookEnabled === undefined) cfg.webhookEnabled = false;
     if (!cfg.offlineGracePeriodSec) cfg.offlineGracePeriodSec = 60;
     if (!cfg.expireNotifyLeadDays) cfg.expireNotifyLeadDays = 7;
+    // Auto-migrate plaintext adminPassword to scrypt hash on load
+    if (cfg.adminPassword && typeof cfg.adminPassword === 'string' && !cfg.adminPassword.startsWith('scrypt:')) {
+      cfg.adminPassword = hashPassword(cfg.adminPassword);
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
+    }
     return cfg;
   } catch (e) {
-    return { 
-      adminPassword: 'Sw123123!', 
-      reportIntervalSec: 2, 
-      pingIntervalSec: 3, 
-      historyMaxPoints: 40, 
+    return {
+      adminPassword: hashPassword(crypto.randomBytes(16).toString('hex')),
+      reportIntervalSec: 2,
+      pingIntervalSec: 3,
+      historyMaxPoints: 40,
       offlineThresholdSec: 10,
       hideIpMode: 'mask',
-      siteTitle: 'Tarnz Probe · 全球分布式服务器监控云探针',
+      siteTitle: 'Tanz Probe · 全球分布式服务器监控云探针',
       siteSubtitle: 'Debian Linux 高性能分布式监控与全网测速'
     };
   }
@@ -310,7 +362,7 @@ async function sendNotification(title, message, level = 'info') {
     try {
       const baseEndpoint = (cfg.telegramEndpoint || 'https://api.telegram.org/bot').replace(/\/+$/, '');
       const url = `${baseEndpoint}/${cfg.telegramBotToken.replace(/^bot/, '')}/sendMessage`;
-      const htmlText = `<b>⚡ Tarnz Probe 通知</b>\n\n<b>${title}</b>\n${message}\n\n<i>时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}</i>`;
+      const htmlText = `<b>⚡ Tanz Probe 通知</b>\n\n<b>${title}</b>\n${message}\n\n<i>时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}</i>`;
 
       const res = await fetch(url, {
         method: 'POST',
@@ -336,7 +388,7 @@ async function sendNotification(title, message, level = 'info') {
   if (cfg.webhookEnabled && cfg.webhookUrl) {
     try {
       const payload = {
-        title: `[Tarnz Probe] ${title}`,
+        title: `[Tanz Probe] ${title}`,
         message: message,
         level: level,
         timestamp: Date.now(),
@@ -522,32 +574,10 @@ function initLatencyHistory() {
   if (fs.existsSync(HISTORY_FILE)) {
     try {
       latencyHistory = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
-      return;
+      if (latencyHistory && typeof latencyHistory === 'object') return;
     } catch (e) {}
   }
-  // Initialize with baseline data for past 24 hours
-  const now = Math.floor(Date.now() / 1000);
-  const baseline = {
-    "node-la": { "pt-cf": 1.0, "pt-gg": 0.8, "pt-ali": 48.0, "pt-tx": 76.0, "pt-ct": 146.0, "pt-cu": 172.0, "pt-cm": 172.0, "pt-prov-河南-telecom": 166.0, "pt-prov-河南-unicom": 175.0, "pt-prov-河南-mobile": 245.0 },
-    "node-hk": { "pt-cf": 3.0, "pt-gg": 2.0, "pt-ali": 3.0, "pt-tx": 1.8, "pt-ct": 36.8, "pt-cu": 50.0, "pt-cm": 42.0, "pt-prov-河南-telecom": 46.0, "pt-prov-河南-unicom": 64.0, "pt-prov-河南-mobile": 42.0 },
-    "node-de": { "pt-cf": 0.8, "pt-gg": 0.6, "pt-ali": 125.0, "pt-tx": 192.0, "pt-ct": 195.0, "pt-cu": 114.0, "pt-cm": 170.0, "pt-prov-河南-telecom": 198.0, "pt-prov-河南-unicom": 123.0, "pt-prov-河南-mobile": 128.0 },
-    "node-jp": { "pt-cf": 0.6, "pt-gg": 1.0, "pt-ali": 2.5, "pt-tx": 86.0, "pt-ct": 53.0, "pt-cu": 58.0, "pt-cm": 64.0, "pt-prov-河南-telecom": 58.0, "pt-prov-河南-unicom": 56.0, "pt-prov-河南-mobile": 63.0 }
-  };
-
-  // Generate 24 hours of points (1 point per 2 minutes = 720 points)
-  for (const [nid, tObj] of Object.entries(baseline)) {
-    for (const [tid, baseLat] of Object.entries(tObj)) {
-      const key = `${nid}:${tid}`;
-      latencyHistory[key] = [];
-      for (let i = 720; i >= 0; i--) {
-        const t = now - (i * 120);
-        // Add tiny realistic jitter (+/- 2%)
-        const jitter = (Math.sin(i / 10) * 0.05 + (Math.random() - 0.5) * 0.04) * baseLat;
-        const lat = Math.max(0.5, +(baseLat + jitter).toFixed(1));
-        latencyHistory[key].push({ t, lat });
-      }
-    }
-  }
+  latencyHistory = {};
 }
 initLatencyHistory();
 
@@ -567,30 +597,10 @@ function initMetricsHistory() {
   if (fs.existsSync(METRICS_HISTORY_FILE)) {
     try {
       metricsHistory = JSON.parse(fs.readFileSync(METRICS_HISTORY_FILE, 'utf8'));
-      if (metricsHistory && Object.keys(metricsHistory).length > 0) return;
+      if (metricsHistory && typeof metricsHistory === 'object') return;
     } catch (e) {}
   }
-
-  // Baseline data generation for up to 24 hours (1 point every 2 minutes = 720 points)
-  const now = Math.floor(Date.now() / 1000);
-  const sList = (typeof serverRegistry !== 'undefined' && Array.isArray(serverRegistry)) ? serverRegistry : [];
-  for (const s of sList) {
-    const nid = s.id;
-    metricsHistory[nid] = [];
-    const baseCpu = nid === 'node-la' ? 12 : (nid === 'node-hk' ? 4 : (nid === 'node-de' ? 13 : (nid === 'node-jp' ? 8 : 10)));
-    const baseMem = nid === 'node-la' ? 55 : (nid === 'node-hk' ? 26 : (nid === 'node-de' ? 30 : (nid === 'node-jp' ? 40 : 25)));
-    const baseSwap = nid === 'node-la' ? 59 : (nid === 'node-hk' ? 15 : (nid === 'node-de' ? 17 : 0));
-
-    for (let i = 720; i >= 0; i--) {
-      const t = now - (i * 120);
-      const cpuJitter = Math.sin(i / 15) * 4 + (Math.random() - 0.5) * 3;
-      const memJitter = Math.cos(i / 20) * 1.5 + (Math.random() - 0.5) * 1.0;
-      const cpu = Math.max(1, Math.min(100, +(baseCpu + cpuJitter).toFixed(1)));
-      const mem = Math.max(1, Math.min(100, +(baseMem + memJitter).toFixed(1)));
-      const swap = Math.max(0, Math.min(100, +(baseSwap + (Math.random() - 0.5) * 0.5).toFixed(1)));
-      metricsHistory[nid].push({ t, cpu, mem, swap });
-    }
-  }
+  metricsHistory = {};
 }
 initMetricsHistory();
 
@@ -690,7 +700,7 @@ app.use((req, res, next) => {
     "style-src 'self' 'unsafe-inline' fonts.googleapis.com cdn.jsdelivr.net https://fonts.googleapis.com https://cdn.jsdelivr.net",
     "font-src 'self' fonts.gstatic.com https://fonts.gstatic.com data:",
     "img-src 'self' data: https:",
-    "connect-src 'self' wss:",
+    "connect-src 'self' ws: wss:",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -910,13 +920,12 @@ function updateHistoricalPeak(rxSpeed, txSpeed) {
     const min = String(d.getMinutes()).padStart(2, '0');
     historicalPeak.formattedDate = `${m}-${day} ${h}:${min}`;
 
-    if (now - lastPeakSaveTime > 5000) {
+    if (now - lastPeakSaveTime > 15000) {
       lastPeakSaveTime = now;
-      try {
-        fs.writeFileSync(HISTORICAL_PEAK_FILE, JSON.stringify(historicalPeak, null, 2), 'utf8');
-      } catch (err) {
-        console.error('Error saving historical_peak.json:', err);
-      }
+      const tmpPeak = `${HISTORICAL_PEAK_FILE}.tmp.${now}`;
+      fs.promises.writeFile(tmpPeak, JSON.stringify(historicalPeak, null, 2), 'utf8')
+        .then(() => fs.promises.rename(tmpPeak, HISTORICAL_PEAK_FILE))
+        .catch(err => console.error('Error saving historical_peak.json:', err));
     }
   }
 }
@@ -991,11 +1000,58 @@ function getGlobalStats() {
   };
 }
 
+// Cached Real TLS Certificate Inspector (refreshed every 10 minutes)
+let cachedSslInfo = null;
+let lastSslCheck = 0;
+function getRealSslInfo() {
+  const now = Date.now();
+  if (cachedSslInfo !== null && now - lastSslCheck < 10 * 60 * 1000) {
+    return cachedSslInfo;
+  }
+  lastSslCheck = now;
+  const candidatePaths = [
+    process.env.SSL_CERT_PATH,
+    config.sslCertPath
+  ].filter(Boolean);
+  try {
+    if (candidatePaths.length === 0 && fs.existsSync('/etc/letsencrypt/live')) {
+      const dirs = fs.readdirSync('/etc/letsencrypt/live', { withFileTypes: true });
+      for (const d of dirs) {
+        if (d.isDirectory() || d.isSymbolicLink()) {
+          candidatePaths.push(path.join('/etc/letsencrypt/live', d.name, 'fullchain.pem'));
+        }
+      }
+    }
+  } catch (e) {}
+  for (const certPath of candidatePaths) {
+    try {
+      if (fs.existsSync(certPath) && typeof crypto.X509Certificate === 'function') {
+        const pem = fs.readFileSync(certPath);
+        const x509 = new crypto.X509Certificate(pem);
+        const validToMs = Date.parse(x509.validTo);
+        const daysRemaining = isNaN(validToMs) ? null : Math.max(0, Math.ceil((validToMs - now) / 86400000));
+        const cnMatch = /CN=([^\n,]+)/.exec(x509.subject || '');
+        const issuerMatch = /O=([^\n,]+)/.exec(x509.issuer || '') || /CN=([^\n,]+)/.exec(x509.issuer || '');
+        const expiresAt = isNaN(validToMs) ? '' : new Date(validToMs).toISOString().slice(0, 10);
+        cachedSslInfo = {
+          domain: config.domain || (cnMatch ? (cnMatch[1].trim().startsWith('*.') ? cnMatch[1].trim() : `*.${cnMatch[1].trim()}`) : 'localhost'),
+          status: daysRemaining !== null && daysRemaining > 14 ? 'healthy' : 'warning',
+          statusText: daysRemaining !== null && daysRemaining > 14 ? '证书健康生效中' : '证书即将过期',
+          issuer: issuerMatch ? issuerMatch[1].trim() : "Let's Encrypt",
+          daysRemaining: daysRemaining ?? 0,
+          expiresAt
+        };
+        return cachedSslInfo;
+      }
+    } catch (e) {}
+  }
+  cachedSslInfo = undefined;
+  return null;
+}
+
 // Build Full Payload
 function getFullPayload() {
   const ipMode = config.hideIpMode || 'mask';
-  const telemetryMap = {};
-
   const serversData = serverRegistry.map(s => {
     const t = telemetry.get(s.id) || {};
     const base = { ...s };
@@ -1036,45 +1092,20 @@ function getFullPayload() {
       traffic: trafficStats
     };
 
-    telemetryMap[s.id] = {
-      status: srvObj.status,
-      last_seen: srvObj.last_seen,
-      info: srvObj.info,
-      metrics: srvObj.metrics,
-      history: srvObj.history,
-      uptimeTimeline: timeline,
-      uptimePercent: uptimePercent,
-      traffic: trafficStats
-    };
-
     return srvObj;
   }).sort((a, b) => (a.order || 99) - (b.order || 99));
 
   return {
     timestamp: Date.now(),
-    siteTitle: config.siteTitle || 'Tarnz Probe · 全球分布式服务器监控云探针',
+    siteTitle: config.siteTitle || 'Tanz Probe · 全球分布式服务器监控云探针',
     siteSubtitle: config.siteSubtitle || 'Debian Linux 高性能分布式监控与全网测速',
     hideIpMode: ipMode,
     theme: 'paper',
     global: getGlobalStats(),
     servers: serversData,
-    telemetry: telemetryMap,
     pingTargets: pingTargets,
     pingIntervalSec: config.pingIntervalSec || 3,
-    services: [
-      { name: 'HTTPS (Web 443)', port: 443, status: 'ok', latency: '16 ms' },
-      { name: 'SSH (远程管理 22)', port: 22, status: 'ok', latency: '28 ms' },
-      { name: 'Docker 容器引擎', type: 'service', status: 'ok', statusText: '运行中 (Active)' },
-      { name: 'DNS 解析服务', type: 'dns', status: 'ok', dns: '1.1.1.1' }
-    ],
-    ssl: {
-      domain: (config.domain || 'tanz.example.com'),
-      status: 'healthy',
-      statusText: '证书健康生效中',
-      issuer: "Cloudflare / Let's Encrypt Authority",
-      daysRemaining: 84,
-      expiresAt: '2027-01-20'
-    }
+    ssl: getRealSslInfo()
   };
 }
 
@@ -1163,28 +1194,12 @@ app.get('/api/client/ping-all', (req, res) => {
 
     const pings = (t.metrics && t.metrics.pings) || {};
     const validPingValues = Object.values(pings).filter(v => typeof v === 'number' && v > 0);
-
-    let baseLatency = 120;
-    const region = (s.region || '').toUpperCase();
-    if (region.includes('CN') || s.name.includes('国内') || s.name.includes('中国')) {
-      baseLatency = 18 + Math.floor(Math.random() * 8);
-    } else if (region.includes('HK') || s.name.includes('香港')) {
-      baseLatency = 26 + Math.floor(Math.random() * 8);
-    } else if (region.includes('JP') || s.name.includes('日本')) {
-      baseLatency = 56 + Math.floor(Math.random() * 10);
-    } else if (region.includes('US') || s.name.includes('洛杉矶')) {
-      baseLatency = 158 + Math.floor(Math.random() * 14);
-    } else if (region.includes('DE') || s.name.includes('德国')) {
-      baseLatency = 208 + Math.floor(Math.random() * 16);
-    }
-
     if (validPingValues.length > 0) {
       const sorted = [...validPingValues].sort((a, b) => a - b);
-      const medianPing = sorted[Math.floor(sorted.length / 2)];
-      baseLatency = Math.round(medianPing * 0.9 + baseLatency * 0.1);
+      latencies[s.id] = Math.round(sorted[Math.floor(sorted.length / 2)]);
+    } else {
+      latencies[s.id] = null;
     }
-
-    latencies[s.id] = baseLatency;
   }
 
   let bestNodeId = null;
@@ -1227,8 +1242,6 @@ app.get('/api/client/ping-all', (req, res) => {
 // Single packet ping endpoint for continuous speedtest (100 packets)
 app.get('/api/client/ping-packet', (req, res) => {
   const seq = parseInt(req.query.seq) || 1;
-  const targetHost = req.query.target;
-
   const clientIp = req.headers['cf-connecting-ip'] || req.headers['x-real-ip'] || (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) || req.socket.remoteAddress;
   const cleanIp = clientIp ? clientIp.replace(/^::ffff:/, '') : '127.0.0.1';
 
@@ -1242,45 +1255,15 @@ app.get('/api/client/ping-packet', (req, res) => {
     }
     const pings = (t.metrics && t.metrics.pings) || {};
     const validPingValues = Object.values(pings).filter(v => typeof v === 'number' && v > 0);
-    
-    let base = 120;
-    const reg = (s.region || '').toUpperCase();
-    if (reg.includes('HK') || s.name.includes('香港')) base = 26;
-    else if (reg.includes('JP') || s.name.includes('日本')) base = 56;
-    else if (reg.includes('US') || s.name.includes('洛杉矶')) base = 158;
-    else if (reg.includes('DE') || s.name.includes('德国')) base = 208;
-
+    let measured = -1;
     if (validPingValues.length > 0) {
       const sorted = [...validPingValues].sort((a, b) => a - b);
-      const median = sorted[Math.floor(sorted.length / 2)];
-      base = Math.round(median * 0.9 + base * 0.1);
+      measured = +(sorted[Math.floor(sorted.length / 2)]).toFixed(1);
     }
-
-    // Realistic natural network jitter
-    const jitter = Math.sin((seq * 7) + (s.order || 1)) * (base * 0.04) + ((Math.random() - 0.5) * 3);
-    const packetLat = Math.max(1, +(base + jitter).toFixed(1));
-
     nodeResults[s.id] = {
       online: true,
-      latency: packetLat
+      latency: measured
     };
-  }
-
-  // Pre-configured carrier checkpoints (ITDOG style)
-  const carrierResults = {
-    'ct-hubei': { name: '湖北十堰', carrier: '电信', tag: '骨干网', endpoint: '111.178.225.1:80', location: '中国 · 湖北十堰 (中国电信)', lat: 145 },
-    'ct-shanghai': { name: '上海10', carrier: '电信', tag: '家庭', endpoint: '101.89.12.1:80', location: '中国 · 上海 (中国电信)', lat: 132 },
-    'ct-yunnan': { name: '云南昆明', carrier: '电信', tag: '家庭', endpoint: '116.55.228.1:80', location: '中国 · 云南昆明 (中国电信)', lat: 168 },
-    'ct-neimeng': { name: '内蒙古呼和浩特', carrier: '电信', tag: '家庭', endpoint: 'nm-ct-v4.ip.zstaticcdn.com:80', location: '中国 · 内蒙古呼和浩特 (中国电信)', lat: 156 },
-    'cu-neimeng': { name: '内蒙古呼和浩特', carrier: '联通', tag: '骨干网', endpoint: 'nm-cu-v4.ip.zstaticcdn.com:80', location: '中国 · 内蒙古呼和浩特 (中国联通)', lat: 128 },
-    'cm-neimeng': { name: '内蒙古呼和浩特', carrier: '移动', tag: '骨干网', endpoint: 'nm-cm-v4.ip.zstaticcdn.com:80', location: '中国 · 内蒙古呼和浩特 (中国移动)', lat: 146 },
-    'bgp-cf': { name: 'Cloudflare CDN', carrier: 'BGP', tag: 'Anycast', endpoint: '1.1.1.1:80', location: 'Anycast/cloudflare.com', lat: 12 },
-    'bgp-bili': { name: '哔哩哔哩 核心', carrier: 'BGP', tag: 'CDN加速', endpoint: 'api.bilibili.com:443', location: '中国 · 亚太加速节点', lat: 138 }
-  };
-
-  for (const [k, obj] of Object.entries(carrierResults)) {
-    const jitter = Math.sin((seq * 5) + obj.lat) * (obj.lat * 0.03) + ((Math.random() - 0.5) * 2.5);
-    obj.latency = Math.max(1, +(obj.lat + jitter).toFixed(1));
   }
 
   res.json({
@@ -1288,7 +1271,7 @@ app.get('/api/client/ping-packet', (req, res) => {
     seq,
     clientIpMasked: cleanIp.replace(/(\d+)\.(\d+)\.(\d+)\.(\d+)/, '$1.$2.***.***'),
     nodeResults,
-    carrierResults,
+    carrierResults: {},
     timestamp: Date.now()
   });
 });
@@ -1359,12 +1342,6 @@ app.get('/api/latency/history', (req, res) => {
 
       let latVal = -1;
       if (match && match.diff <= stepSec * 2.5 && match.point.lat > 0) {
-        latVal = match.point.lat;
-      } else if (currLat > 0) {
-        // Synthesize smooth continuous point based on current measured latency
-        const jitter = (Math.sin((binTime / stepSec) / 2) * 0.03 + (Math.sin(binTime % 7) * 0.02)) * currLat;
-        latVal = Math.max(0.5, +(currLat + jitter).toFixed(1));
-      } else if (match && match.point && match.point.lat > 0) {
         latVal = match.point.lat;
       }
 
@@ -1461,11 +1438,6 @@ app.get('/api/latency/node-history', (req, res) => {
       let latVal = -1;
       if (match && match.diff <= stepSec * 2.5 && match.point.lat > 0) {
         latVal = match.point.lat;
-      } else if (currLat > 0) {
-        const jitter = (Math.sin((binTime / stepSec) / 2) * 0.03 + (Math.sin((binTime + idx * 3) % 7) * 0.02)) * currLat;
-        latVal = Math.max(0.5, +(currLat + jitter).toFixed(1));
-      } else if (match && match.point && match.point.lat > 0) {
-        latVal = match.point.lat;
       }
 
       synchronizedPoints.push({ t: binTime, lat: latVal });
@@ -1543,13 +1515,15 @@ app.get('/api/node/metrics-history', (req, res) => {
   const currMem = +(tData?.metrics?.mem_percent !== undefined ? tData.metrics.mem_percent : (tData?.metrics?.mem_used && tData?.info?.mem_total ? ((tData.metrics.mem_used / tData.info.mem_total) * 100) : 0)).toFixed(1);
   const currSwap = +(tData?.info?.swap_total ? ((tData.metrics?.swap_used / tData.info.swap_total) * 100) : 0).toFixed(1);
 
-  // Memory total capacity in GB
-  const memTotalGB = (s && s.info && s.info.mem_total)
-    ? +(s.info.mem_total / (1024**3)).toFixed(1)
+  // Memory total capacity in GB (from live telemetry info, falling back to config)
+  const rawMemTotal = (tData && tData.info && tData.info.mem_total) || (s && s.info && s.info.mem_total) || 0;
+  const rawSwapTotal = (tData && tData.info && tData.info.swap_total) || (s && s.info && s.info.swap_total) || 0;
+  const memTotalGB = rawMemTotal > 0
+    ? +(rawMemTotal / (1024**3)).toFixed(1)
     : (s && s.memoryGB ? Number(s.memoryGB) : 4.0);
-  const swapTotalGB = (s && s.info && s.info.swap_total)
-    ? +(s.info.swap_total / (1024**3)).toFixed(1)
-    : 2.0;
+  const swapTotalGB = rawSwapTotal > 0
+    ? +(rawSwapTotal / (1024**3)).toFixed(1)
+    : 0;
 
   const cpuData = [];
   const memData = [];
@@ -1559,19 +1533,14 @@ app.get('/api/node/metrics-history', (req, res) => {
     const binTime = timeline[i];
     const match = findClosestPoint(rawPoints, binTime);
 
-    let cpuVal = currCpu;
-    let memVal = currMem;
-    let swapVal = currSwap;
+    let cpuVal = null;
+    let memVal = null;
+    let swapVal = null;
 
     if (match && match.diff <= stepSec * 2.5) {
       cpuVal = match.point.cpu;
       memVal = match.point.mem;
       swapVal = match.point.swap;
-    } else {
-      const jitter = Math.sin(i / 5) * 1.5;
-      cpuVal = Math.max(0, Math.min(100, +(currCpu + jitter).toFixed(1)));
-      memVal = Math.max(0, Math.min(100, +(currMem + jitter * 0.3).toFixed(1)));
-      swapVal = Math.max(0, Math.min(100, +(currSwap).toFixed(1)));
     }
 
     cpuData.push(cpuVal);
@@ -2499,11 +2468,11 @@ app.post('/api/report', (req, res) => {
 app.get('/uninstall.sh', (req, res) => {
   res.setHeader('Content-Type', 'text/x-shellscript');
   const script = `#!/usr/bin/env bash
-# Tarnz Probe Agent Uninstaller
+# Tanz Probe Agent Uninstaller
 set -e
 
 echo "=========================================="
-echo "⚡ Tarnz Probe Agent 正在执行彻底清理卸载..."
+echo "⚡ Tanz Probe Agent 正在执行彻底清理卸载..."
 echo "=========================================="
 
 echo "[1/4] 停止并禁用 systemd 服务..."
@@ -2526,7 +2495,7 @@ echo "[4/4] 终止可能存在的残留进程..."
 pkill -9 -f /opt/tanz-agent/agent.py 2>/dev/null || true
 
 echo "=========================================="
-echo "✅ Tarnz Probe Agent 客户端已成功从本机彻底卸载！"
+echo "✅ Tanz Probe Agent 客户端已成功从本机彻底卸载！"
 echo "=========================================="
 `;
   res.send(script);
@@ -2783,7 +2752,7 @@ function getClientIp(req) {
 }
 
 // Set of known installed agent IPs (initialized with localhost and master IP)
-const installedAgentIps = new Set(['127.0.0.1', '::1', 'localhost', '1.2.3.4']);
+const installedAgentIps = new Set(['127.0.0.1', '::1', 'localhost']);
 
 function refreshInstalledAgentIps() {
   if (typeof serverRegistry !== 'undefined' && Array.isArray(serverRegistry)) {
@@ -2894,7 +2863,7 @@ function requireAdmin(req, res, next) {
 
   const session = activeSessions.get(token);
   const isValidSession = session && now < session.expiresAt;
-  const isDirectPassword = (token === config.adminPassword);
+  const isDirectPassword = verifyPassword(token, config.adminPassword);
 
   if (!isValidSession && !isDirectPassword) {
     return res.status(401).json({ error: 'Unauthorized: Session expired or invalid admin token' });
@@ -2929,7 +2898,7 @@ app.get('/api/admin/auth-status', (req, res) => {
         mode: 'session'
       });
     }
-    if (token === config.adminPassword) {
+    if (verifyPassword(token, config.adminPassword)) {
       return res.json({
         ok: true,
         authenticated: true,
@@ -3032,7 +3001,7 @@ app.post('/api/admin/login', async (req, res) => {
   }
 
   // 2. Validate Password
-  if (password === config.adminPassword) {
+  if (verifyPassword(password, config.adminPassword)) {
     // Reset failed counter
     loginAttempts.delete(ip);
 
@@ -3494,8 +3463,15 @@ app.delete('/api/admin/servers/:id', requireAdmin, (req, res) => {
     return res.status(404).json({ error: 'Server not found' });
   }
   telemetry.delete(id);
+  delete trafficState[id];
+  delete metricsHistory[id];
+  delete uptimeHistory[id];
+  for (const key of Object.keys(latencyHistory)) {
+    if (key.startsWith(id + ':')) delete latencyHistory[key];
+  }
+  saveTrafficState();
   saveServers(serverRegistry);
-  broadcastTelemetry();
+  broadcastTelemetry(true);
   addAuditLog('warn', `删除服务器节点: [${targetServer ? targetServer.name : id}]`);
   res.json({ ok: true, id });
 });
@@ -3535,7 +3511,7 @@ app.post('/api/admin/targets/add', requireAdmin, (req, res) => {
     return res.status(400).json({ error: 'Target name and host/IP are required' });
   }
 
-  const cleanHost = String(host).split(':')[0].trim();
+  const rawHost = String(host).trim(); const cleanHost = /^\[.*\](:\d+)?$/.test(rawHost) ? rawHost.replace(/^\[([^\]]+)\].*$/, '$1') : (rawHost.split(':').length === 2 ? rawHost.split(':')[0] : rawHost);
   const id = req.body.id || `pt-${crypto.randomBytes(3).toString('hex')}`;
   const newTarget = {
     id,
@@ -3561,7 +3537,7 @@ app.put('/api/admin/targets/:id', requireAdmin, (req, res) => {
 
   const { name, host, flag, group } = req.body;
   if (name) pingTargets[tIdx].name = name.trim();
-  if (host) pingTargets[tIdx].host = String(host).split(':')[0].trim();
+  if (host) { const rawH = String(host).trim(); pingTargets[tIdx].host = /^\[.*\](:\d+)?$/.test(rawH) ? rawH.replace(/^\[([^\]]+)\].*$/, '$1') : (rawH.split(':').length === 2 ? rawH.split(':')[0] : rawH); }
   if (flag) pingTargets[tIdx].flag = flag.trim();
   if (group) pingTargets[tIdx].group = group.trim();
   if (req.body.clients !== undefined && Array.isArray(req.body.clients)) {
@@ -3578,8 +3554,11 @@ app.delete('/api/admin/targets/:id', requireAdmin, (req, res) => {
   const id = req.params.id;
   const target = pingTargets.find(t => t.id === id);
   pingTargets = pingTargets.filter(t => t.id !== id);
+  for (const key of Object.keys(latencyHistory)) {
+    if (key.endsWith(':' + id)) delete latencyHistory[key];
+  }
   savePingTargets(pingTargets);
-  broadcastTelemetry();
+  broadcastTelemetry(true);
   addAuditLog('warn', `删除测速目标: [${target ? target.name : id}]`);
   res.json({ ok: true, id, pingTargets });
 });
@@ -3713,14 +3692,14 @@ app.post('/api/admin/change-password', requireAdmin, (req, res) => {
   if (!oldPassword || !newPassword) {
     return res.status(400).json({ error: '请提供原密码与新密码' });
   }
-  if (oldPassword !== config.adminPassword) {
+  if (!verifyPassword(oldPassword, config.adminPassword)) {
     return res.status(400).json({ error: '原密码校验错误' });
   }
   if (newPassword.length < 6) {
     return res.status(400).json({ error: '新密码长度至少需要 6 个字符' });
   }
 
-    config.adminPassword = newPassword;
+  config.adminPassword = hashPassword(newPassword);
   saveConfig(config);
 
   // Invalidate all existing sessions and create a fresh one for the current admin
@@ -3745,9 +3724,11 @@ app.get('/api/admin/audit-logs', requireAdmin, (req, res) => {
 // Flush Latency Cache
 app.post('/api/admin/flush-cache', requireAdmin, (req, res) => {
   latencyHistory = {};
-  initLatencyHistory();
+  try {
+    if (fs.existsSync(HISTORY_FILE)) fs.unlinkSync(HISTORY_FILE);
+  } catch (e) {}
   addAuditLog('warn', '手动清空网络延迟历史点缓存并重置');
-  res.json({ ok: true, message: '延迟缓存已清空并重新初始化' });
+  res.json({ ok: true, message: '延迟缓存已清空并重置' });
 });
 
 // Export Backup API
@@ -3758,7 +3739,7 @@ app.get('/api/admin/export-backup', requireAdmin, (req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.json({
     exportTime: new Date().toISOString(),
-    system: 'Tarnz Probe',
+    system: 'Tanz Probe',
     config: safeCfg,
     servers: serverRegistry,
     pingTargets: pingTargets
@@ -3784,7 +3765,7 @@ app.get('/api/admin/notification/config', requireAdmin, (req, res) => {
   });
 });
 
-app.post('/api/admin/notification/config', requireAdmin, (req, res) => {
+app.post('/api/admin/notification/config', requireAdmin, async (req, res) => {
   const {
     telegramEnabled,
     telegramBotToken,
@@ -3801,7 +3782,17 @@ app.post('/api/admin/notification/config', requireAdmin, (req, res) => {
   if (telegramChatId !== undefined) config.telegramChatId = String(telegramChatId).trim();
   if (telegramEndpoint !== undefined) config.telegramEndpoint = String(telegramEndpoint).trim() || 'https://api.telegram.org/bot';
   if (webhookEnabled !== undefined) config.webhookEnabled = !!webhookEnabled;
-  if (webhookUrl !== undefined) config.webhookUrl = String(webhookUrl).trim();
+  if (webhookUrl !== undefined) {
+    const cleanUrl = String(webhookUrl).trim();
+    if (cleanUrl) {
+      try {
+        await validateSafeUrl(cleanUrl);
+      } catch (err) {
+        return res.status(400).json({ ok: false, error: `Webhook 地址安全校验失败: ${err.message}` });
+      }
+    }
+    config.webhookUrl = cleanUrl;
+  }
   if (offlineGracePeriodSec !== undefined) config.offlineGracePeriodSec = Math.max(10, Math.min(3600, Number(offlineGracePeriodSec) || 60));
   if (expireNotifyLeadDays !== undefined) config.expireNotifyLeadDays = Math.max(1, Math.min(60, Number(expireNotifyLeadDays) || 7));
 
@@ -3819,7 +3810,7 @@ app.post(['/api/admin/notification/test', '/api/admin/notify/test'], requireAdmi
     return res.status(400).json({ ok: false, error: '请先填写有效的 Telegram Bot Token 与 Chat ID！' });
   }
 
-  const results = await sendNotification('🔔 测试告警通知', '这是来自 Tarnz Probe 探针系统的测试告警，说明您的 Telegram 告警机器人通道已配置成功并保持畅通！', 'info');
+  const results = await sendNotification('🔔 测试告警通知', '这是来自 Tanz Probe 探针系统的测试告警，说明您的 Telegram 告警机器人通道已配置成功并保持畅通！', 'info');
   
   if (results.telegram) {
     res.json({ ok: true, results, message: 'Telegram 测试消息已成功送达！' });
@@ -3847,6 +3838,7 @@ wss.on('connection', (ws) => {
 });
 
 let broadcastThrottle = null;
+let pendingForceFull = false;
 let lastFullBroadcastTime = 0;
 
 function getDeltaPayload() {
@@ -3883,11 +3875,14 @@ function getDeltaPayload() {
 }
 
 function broadcastTelemetry(forceFull = false) {
+  if (forceFull) pendingForceFull = true;
   if (broadcastThrottle) return;
   broadcastThrottle = setTimeout(() => {
     broadcastThrottle = null;
+    const forceNow = pendingForceFull;
+    pendingForceFull = false;
     const now = Date.now();
-    const isFull = forceFull || (now - lastFullBroadcastTime > 25000);
+    const isFull = forceNow || (now - lastFullBroadcastTime > 25000);
     if (isFull) lastFullBroadcastTime = now;
 
     const packet = isFull 
@@ -3903,7 +3898,13 @@ function broadcastTelemetry(forceFull = false) {
   }, 100);
 }
 
+function handleShutdown() {
+  saveTrafficStateSync();
+  process.exit(0);
+}
+process.on('SIGINT', handleShutdown);
+process.on('SIGTERM', handleShutdown);
+
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`⚡ Tarnz Probe Master running on http://127.0.0.1:${PORT}`);
-  console.log(`🔑 Admin password: ${config.adminPassword}`);
+  console.log(`⚡ Tanz Probe Master running on http://127.0.0.1:${PORT}`);
 });

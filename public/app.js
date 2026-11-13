@@ -1,5 +1,5 @@
 /**
- * Tarnz Probe - High Performance Frontend Engine (v5.0 Pro)
+ * Tanz Probe - High Performance Frontend Engine (v5.0 Pro)
  * Features:
  * - Pure Minimalist White (极简白)
  * - Strict Zero IP Exposure on Front Page
@@ -45,6 +45,16 @@ const state = {
 // ---------------------------------------------------------------------
 // Utility & Formatting Helpers
 // ---------------------------------------------------------------------
+
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function formatBytes(bytes, decimals = 1) {
   if (!bytes || isNaN(bytes) || bytes <= 0) {
@@ -572,7 +582,10 @@ function handleDataUpdate(raw) {
         last_seen: s.last_seen || 0,
         info: s.info || {},
         metrics: s.metrics || {},
-        history: s.history || []
+        history: s.history || [],
+        uptimeTimeline: s.uptimeTimeline || [],
+        uptimePercent: s.uptimePercent,
+        traffic: s.traffic
       };
     });
   }
@@ -584,6 +597,7 @@ function handleDataUpdate(raw) {
   if (data.pingInterval) state.pingInterval = data.pingInterval;
 
   updateKomariDashboard();
+  renderWorldMapNodes();
   renderRegionFilters();
   renderServers();
 
@@ -1477,7 +1491,7 @@ function updateSingleCardInPlace(card, s) {
   const swapPct = swapTotal > 0 ? Math.round((swapUsed / swapTotal) * 100) : 0;
 
   const diskTotal = inf.disk_total || (s.diskGB ? s.diskGB * 1024 * 1024 * 1024 : 0) || (50 * 1024 * 1024 * 1024);
-  const diskUsed = isOnline ? (m.disk_used || (inf.disk_total ? Math.round(inf.disk_total * 0.45) : 0)) : 0;
+  const diskUsed = isOnline ? (m.disk_used || 0) : 0;
   const diskPct = diskTotal > 0 ? Math.round((diskUsed / diskTotal) * 100) : 0;
 
   const rxSpeed = isOnline ? (m.net_rx_speed || 0) : 0;
@@ -1489,7 +1503,7 @@ function updateSingleCardInPlace(card, s) {
   const lifetimeTraffic = Math.max((tr.lifetimeBytes !== undefined) ? tr.lifetimeBytes : bootTraffic, bootTraffic);
   const totalTraffic = lifetimeTraffic;
 
-  const uptimeStr = isOnline ? formatUptime(m.uptime || (inf.boot_time ? (Date.now()/1000 - inf.boot_time) : 0)) : '离线';
+  const uptimeStr = isOnline ? formatUptime(m.uptime_seconds || m.uptime || (inf.boot_time ? Math.max(0, Date.now()/1000 - inf.boot_time) : 0)) : '离线';
 
   // In-place updates on text nodes and style bars
   const statusPill = card.querySelector('.card-status-pill');
@@ -1672,7 +1686,7 @@ function buildServerCardHtml(s) {
   const swapPct = swapTotal > 0 ? Math.round((swapUsed / swapTotal) * 100) : 0;
 
   const diskTotal = inf.disk_total || (s.diskGB ? s.diskGB * 1024 * 1024 * 1024 : 0) || (50 * 1024 * 1024 * 1024);
-  const diskUsed = isOnline ? (m.disk_used || (inf.disk_total ? Math.round(inf.disk_total * 0.45) : 0)) : 0;
+  const diskUsed = isOnline ? (m.disk_used || 0) : 0;
   const diskPct = diskTotal > 0 ? Math.round((diskUsed / diskTotal) * 100) : 0;
 
   const rxSpeed = isOnline ? (m.net_rx_speed || 0) : 0;
@@ -1684,7 +1698,7 @@ function buildServerCardHtml(s) {
   const lifetimeTraffic = Math.max((tr.lifetimeBytes !== undefined) ? tr.lifetimeBytes : bootTraffic, bootTraffic);
   const totalTraffic = lifetimeTraffic;
 
-  const uptimeStr = isOnline ? formatUptime(m.uptime || (inf.boot_time ? (Date.now()/1000 - inf.boot_time) : 0)) : '离线';
+  const uptimeStr = isOnline ? formatUptime(m.uptime_seconds || m.uptime || (inf.boot_time ? Math.max(0, Date.now()/1000 - inf.boot_time) : 0)) : '离线';
 
   return `
     <div id="node-card-${s.id}" data-node-id="${s.id}" class="node-card-item white-card rounded-2xl p-4 sm:p-5 cursor-pointer relative group flex flex-col justify-between active:scale-[0.99] transition-all hover:border-slate-300 hover:shadow-md" onclick="openServerDetail('${s.id}')">
@@ -1698,9 +1712,9 @@ function buildServerCardHtml(s) {
             <div class="min-w-0">
               <div class="flex items-center space-x-2">
                 <h3 class="font-extrabold text-base sm:text-lg text-slate-900 group-hover:text-indigo-600 transition-colors tracking-tight truncate">
-                  ${s.name}
+                  ${escapeHtml(s.name)}
                 </h3>
-                ${s.tag ? `<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0">${s.tag}</span>` : ''}
+                ${s.tag ? `<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0">${escapeHtml(s.tag)}</span>` : ''}
               </div>
               <div class="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-slate-500">
                 <span class="inline-flex items-center space-x-1 text-slate-600 font-mono text-[10px] bg-slate-100/80 px-1 py-0.2 rounded border border-slate-200/60 shrink-0">
@@ -1876,7 +1890,7 @@ function renderTable(servers) {
     const rxTotal = isOnline ? (m.net_rx_total || 0) : 0;
     const txTotal = isOnline ? (m.net_tx_total || 0) : 0;
 
-    const uptimeStr = isOnline ? formatUptime(m.uptime || inf.boot_time ? (Date.now()/1000 - inf.boot_time) : 0) : '离线';
+    const uptimeStr = isOnline ? formatUptime(m.uptime_seconds || m.uptime || (inf.boot_time ? Math.max(0, Date.now()/1000 - inf.boot_time) : 0)) : '离线';
     const virtBadge = formatVirtBadge(inf.virtualization || s.virtualization);
 
     return `
@@ -1886,7 +1900,7 @@ function renderTable(servers) {
           <div class="flex items-center space-x-2">
             ${getFlagHtml(s.region, s.flag, 'w-5 h-3.5')}
             <div>
-              <div class="font-bold text-slate-900">${s.name}</div>
+              <div class="font-bold text-slate-900">${escapeHtml(s.name)}</div>
               <div class="text-[11px] text-slate-500 font-mono">${formatLocation(s.location || s.region)}</div>
             </div>
           </div>
@@ -2139,6 +2153,8 @@ function renderLatencyChartUI(data) {
 
   const datasets = [];
   let allPings = [];
+  let totalSamples = 0;
+  let lostSamples = 0;
 
   servers.forEach((s, idx) => {
     const sData = (data.series && data.series[s.id]) || data[s.id] || {};
@@ -2151,9 +2167,13 @@ function renderLatencyChartUI(data) {
       const t = p.t !== undefined ? p.t : p.time;
       const lat = (p.lat !== undefined && p.lat !== null) ? p.lat : p.ping;
       if (t !== undefined) {
-        pointMap.set(t, (lat !== undefined && lat > 0) ? lat : null);
-        if (lat !== undefined && lat > 0) {
+        totalSamples++;
+        if (lat !== undefined && lat !== null && lat > 0) {
+          pointMap.set(t, lat);
           allPings.push(lat);
+        } else {
+          pointMap.set(t, null);
+          lostSamples++;
         }
       }
     });
@@ -2172,7 +2192,7 @@ function renderLatencyChartUI(data) {
       pointHoverRadius: 4,
       pointHitRadius: 8,
       tension: 0.35,
-      spanGaps: true
+      spanGaps: false
     });
   });
 
@@ -2188,15 +2208,17 @@ function renderLatencyChartUI(data) {
     const min = Math.round(Math.min(...allPings));
     const max = Math.round(Math.max(...allPings));
 
+    const lossRate = totalSamples > 0 ? ((lostSamples / totalSamples) * 100).toFixed(1) : '0.0';
     if (avgEl) avgEl.innerText = `${avg} ms`;
     if (bestEl) bestEl.innerText = `${min} ms`;
     if (peakEl) peakEl.innerText = `${max} ms`;
-    if (lossEl) lossEl.innerText = `0.0%`;
+    if (lossEl) lossEl.innerText = `${lossRate}%`;
   } else {
+    const lossRate = totalSamples > 0 ? ((lostSamples / totalSamples) * 100).toFixed(1) : '-';
     if (avgEl) avgEl.innerText = `- ms`;
     if (bestEl) bestEl.innerText = `- ms`;
     if (peakEl) peakEl.innerText = `- ms`;
-    if (lossEl) lossEl.innerText = `0%`;
+    if (lossEl) lossEl.innerText = lossRate === '-' ? '-' : `${lossRate}%`;
   }
 
   // Render chart node legends with pill design
@@ -2442,7 +2464,7 @@ function updateServerDetailContent(serverId) {
   }
 
   const diskTotal = inf.disk_total || (s.diskGB ? s.diskGB * 1024 * 1024 * 1024 : 0) || (50 * 1024 * 1024 * 1024);
-  const diskUsed = isOnline ? (m.disk_used || (inf.disk_total ? Math.round(inf.disk_total * 0.45) : 0)) : 0;
+  const diskUsed = isOnline ? (m.disk_used || 0) : 0;
   const diskPct = diskTotal > 0 ? Math.round((diskUsed / diskTotal) * 100) : 0;
   const diskEl = document.getElementById('modalDiskTotal');
   if (diskEl) {
@@ -2566,7 +2588,7 @@ function updateServerDetailContent(serverId) {
 
   // Render Backhaul Routes & Key Services
   renderModalRoutes(s.routes);
-  renderModalServices(state.services, state.ssl);
+  renderModalServices(m, state.ssl, isOnline);
 
   // Render Latency Chart in Modal
   renderModalLatencyChart(s, t);
@@ -2591,7 +2613,7 @@ function updateServerDetailContent(serverId) {
   }
 
   if (modalUptimeRun) {
-    modalUptimeRun.innerText = isOnline ? formatUptime(m.uptime || (inf.boot_time ? (Date.now()/1000 - inf.boot_time) : 0)) : '当前离线';
+    modalUptimeRun.innerText = isOnline ? formatUptime(m.uptime_seconds || m.uptime || (inf.boot_time ? Math.max(0, Date.now()/1000 - inf.boot_time) : 0)) : '当前离线';
   }
 
   if (modalUptimeGrid) {
@@ -2781,8 +2803,8 @@ function renderSparklinesWithData(data, server) {
   const swapTotalGB = data.swapTotalGB || (server?.info?.swap_total ? +(server.info.swap_total / (1024**3)).toFixed(1) : 2.0);
 
   // Convert mem percent into GB for physical ceiling scale
-  const memDataInGB = (data.mem || []).map(p => +( (Number(p || 0) / 100) * memTotalGB ).toFixed(2));
-  const swapDataInGB = (data.swap || []).map(p => +( (Number(p || 0) / 100) * swapTotalGB ).toFixed(2));
+  const memDataInGB = (data.mem || []).map(p => (p === null || p === undefined) ? null : +( (Number(p) / 100) * memTotalGB ).toFixed(2));
+  const swapDataInGB = (data.swap || []).map(p => (p === null || p === undefined) ? null : +( (Number(p) / 100) * swapTotalGB ).toFixed(2));
 
   // Common X-axis configuration with clean timestamps
   const commonXAxis = {
@@ -2830,7 +2852,7 @@ function renderSparklinesWithData(data, server) {
     },
     elements: {
       point: { radius: 0 },
-      line: { tension: 0.35 }
+      line: { tension: 0.35, spanGaps: false }
     }
   };
 
@@ -2874,7 +2896,7 @@ function renderSparklinesWithData(data, server) {
     },
     elements: {
       point: { radius: 0 },
-      line: { tension: 0.35 }
+      line: { tension: 0.35, spanGaps: false }
     }
   };
 
@@ -2982,50 +3004,60 @@ function renderModalRoutes(routes) {
   `;
 }
 
-function renderModalServices(services, ssl) {
+function renderModalServices(metrics, ssl, isOnline = true) {
   const grid = document.getElementById('modalServicesGrid');
   if (!grid) return;
-  const sslData = ssl || {
-    domain: 'tanz.example.com',
-    daysRemaining: 84,
-    validTo: '2027-01-20',
-    issuer: 'Cloudflare / Let\'s Encrypt'
-  };
+  const m = metrics || {};
+  const tcpVal = isOnline ? (m.tcp_count ?? m.tcp_conns ?? '--') : '--';
+  const udpVal = isOnline ? (m.udp_count ?? m.udp_conns ?? '--') : '--';
+  const procVal = isOnline ? (m.process_count ?? '--') : '--';
+
+  const sslHtml = ssl ? `
+    <div class="p-2.5 rounded-xl bg-emerald-50/80 border border-emerald-200 flex flex-col justify-between">
+      <div class="flex items-center justify-between text-[10px] text-emerald-800 font-semibold">
+        <span>主控 SSL 证书</span>
+        <span class="font-mono text-emerald-700">剩余 ${ssl.daysRemaining} 天</span>
+      </div>
+      <div class="w-full bg-emerald-200/60 rounded-full h-1 mt-1 overflow-hidden">
+        <div class="bg-emerald-600 h-1 rounded-full" style="width: ${Math.min(100, Math.round((ssl.daysRemaining / 90) * 100))}%"></div>
+      </div>
+      <div class="text-[9px] text-emerald-700 font-mono mt-0.5 truncate" title="${escapeHtml(ssl.domain)}">
+        ${escapeHtml(ssl.domain)}
+      </div>
+    </div>
+  ` : `
+    <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
+      <div class="min-w-0">
+        <div class="text-[10px] text-slate-500 truncate">主控 SSL 证书</div>
+        <div class="text-xs font-bold text-slate-600 font-mono mt-0.5">由网关托管</div>
+      </div>
+      <span class="w-2.5 h-2.5 rounded-full bg-slate-400 shrink-0"></span>
+    </div>
+  `;
 
   grid.innerHTML = `
     <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
       <div class="min-w-0">
-        <div class="text-[10px] text-slate-500 truncate">HTTPS (Web 443)</div>
-        <div class="text-xs font-bold text-slate-800 font-mono mt-0.5">200 OK</div>
+        <div class="text-[10px] text-slate-500 truncate">TCP 连接数</div>
+        <div class="text-xs font-bold text-slate-800 font-mono mt-0.5">${tcpVal}</div>
       </div>
-      <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0 pulse-dot"></span>
+      <span class="w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-emerald-500 pulse-dot' : 'bg-slate-400'} shrink-0"></span>
     </div>
     <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
       <div class="min-w-0">
-        <div class="text-[10px] text-slate-500 truncate">SSH 远程端口 (22)</div>
-        <div class="text-xs font-bold text-slate-800 font-mono mt-0.5">已开放</div>
+        <div class="text-[10px] text-slate-500 truncate">UDP 套接字</div>
+        <div class="text-xs font-bold text-slate-800 font-mono mt-0.5">${udpVal}</div>
       </div>
-      <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0"></span>
+      <span class="w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-indigo-500' : 'bg-slate-400'} shrink-0"></span>
     </div>
     <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
       <div class="min-w-0">
-        <div class="text-[10px] text-slate-500 truncate">Docker 容器环境</div>
-        <div class="text-xs font-bold text-slate-800 font-mono mt-0.5">Active</div>
+        <div class="text-[10px] text-slate-500 truncate">活跃进程数</div>
+        <div class="text-xs font-bold text-slate-800 font-mono mt-0.5">${procVal}</div>
       </div>
-      <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0"></span>
+      <span class="w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-sky-500' : 'bg-slate-400'} shrink-0"></span>
     </div>
-    <div class="p-2.5 rounded-xl bg-emerald-50/80 border border-emerald-200 flex flex-col justify-between">
-      <div class="flex items-center justify-between text-[10px] text-emerald-800 font-semibold">
-        <span>SSL 证书到期</span>
-        <span class="font-mono text-emerald-700">剩余 ${sslData.daysRemaining} 天</span>
-      </div>
-      <div class="w-full bg-emerald-200/60 rounded-full h-1 mt-1 overflow-hidden">
-        <div class="bg-emerald-600 h-1 rounded-full" style="width: ${Math.min(100, Math.round((sslData.daysRemaining / 90) * 100))}%"></div>
-      </div>
-      <div class="text-[9px] text-emerald-700 font-mono mt-0.5 truncate" title="${sslData.domain}">
-        ${sslData.domain}
-      </div>
-    </div>
+    ${sslHtml}
   `;
 }
 
@@ -3397,8 +3429,114 @@ function applyThemeToCharts() {
 window.toggleThemeMode = toggleThemeMode;
 
 
+
+// ---------------------------------------------------------------------
+// Dynamic World Map Loader & Live Node Pinning (Single Shared SVG Asset)
+// ---------------------------------------------------------------------
+let worldMapSvgRaw = null;
+
+function getServerMapPosition(s) {
+  const txt = `${s.location || ''} ${s.name || ''} ${s.region || ''}`.toLowerCase();
+  if (txt.includes('德国') || txt.includes('法兰克福') || txt.includes('de') || txt.includes('fra')) return { x: 1050, y: 185, color: '#059669' };
+  if (txt.includes('新加坡') || txt.includes('sg')) return { x: 1525, y: 445, color: '#10b981' };
+  if (txt.includes('东京') || txt.includes('日本') || txt.includes('jp')) return { x: 1720, y: 270, color: '#0284c7' };
+  if (txt.includes('香港') || txt.includes('hk')) return { x: 1575, y: 345, color: '#d97706' };
+  if (txt.includes('家里') || txt.includes('国内') || txt.includes('中国') || (s.region || '').toUpperCase() === 'CN') return { x: 1555, y: 295, color: '#e11d48' };
+  if (txt.includes('洛杉矶') || txt.includes('美国') || txt.includes('us') || txt.includes('gia') || txt.includes('4837') || txt.includes('cc')) return { x: 375, y: 285, color: '#4f46e5' };
+  return { x: 1000, y: 280, color: '#6366f1' };
+}
+
+function renderWorldMapNodes() {
+  const servers = state.servers || [];
+  const groups = {};
+  servers.forEach(s => {
+    const pos = getServerMapPosition(s);
+    const key = `${pos.x},${pos.y}`;
+    if (!groups[key]) groups[key] = { ...pos, servers: [] };
+    groups[key].servers.push(s);
+  });
+
+  const nodesMarkup = Object.values(groups).map((g, idx) => {
+    const anyOnline = g.servers.some(s => s.status === 'online' || state.telemetry[s.id]?.status === 'online');
+    const primary = g.servers[0];
+    const label = g.servers.length > 1
+      ? `${primary.flag || '🌐'} ${primary.location || primary.name} (${g.servers.length}台)`
+      : `${primary.flag || '🌐'} ${primary.name}`;
+    const dotColor = anyOnline ? g.color : '#94a3b8';
+    const boxW = Math.min(340, Math.max(210, label.length * 16 + 50));
+    const boxX = Math.max(10, Math.min(2000 - boxW - 10, g.x - boxW / 2));
+    const boxY = Math.max(10, g.y - 75);
+    return `
+      <g class="cursor-pointer group" onclick="if(typeof closeWorldMapModal==='function') closeWorldMapModal(); if(typeof openServerDetail==='function') openServerDetail('${escapeHtml(primary.id)}');">
+        ${anyOnline ? `<circle cx="${g.x}" cy="${g.y}" r="36" fill="${dotColor}" opacity="0.22"><animate attributeName="r" values="14;42;14" dur="3s" begin="${(idx * 0.5).toFixed(1)}s" repeatCount="indefinite" /><animate attributeName="opacity" values="0.35;0.05;0.35" dur="3s" begin="${(idx * 0.5).toFixed(1)}s" repeatCount="indefinite" /></circle>` : ''}
+        <circle cx="${g.x}" cy="${g.y}" r="11" fill="${dotColor}" stroke="#ffffff" stroke-width="3.5" />
+        <rect x="${boxX}" y="${boxY}" width="${boxW}" height="44" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.8" />
+        <text x="${boxX + boxW / 2}" y="${boxY + 28}" font-size="19" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="700" fill="#1e293b" text-anchor="middle">${escapeHtml(label)}</text>
+      </g>
+    `;
+  }).join('');
+
+  document.querySelectorAll('.dynamic-map-nodes').forEach(el => {
+    el.innerHTML = nodesMarkup;
+  });
+
+  // Render dynamic node cards inside #worldMapModal
+  const cardsGrid = document.getElementById('worldMapNodeCardsGrid');
+  const badgeEl = document.getElementById('worldMapTotalBadge');
+  if (badgeEl) {
+    const onlineCnt = servers.filter(s => s.status === 'online' || state.telemetry[s.id]?.status === 'online').length;
+    badgeEl.textContent = `共 ${servers.length} 个节点（${onlineCnt} 在线）`;
+  }
+  if (cardsGrid) {
+    cardsGrid.innerHTML = servers.map(s => {
+      const isOnline = s.status === 'online' || state.telemetry[s.id]?.status === 'online';
+      return `
+        <div onclick="closeWorldMapModal(); openServerDetail('${escapeHtml(s.id)}');" class="p-3 rounded-xl bg-slate-50/80 hover:bg-indigo-50/50 border border-slate-200/80 hover:border-indigo-300 transition-all cursor-pointer group flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between gap-1">
+              <span class="text-base">${s.flag || '🌐'}</span>
+              ${s.tag ? `<span class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-100 text-indigo-700 font-mono truncate max-w-[110px]">${escapeHtml(s.tag)}</span>` : ''}
+            </div>
+            <div class="font-bold text-xs text-slate-800 mt-1.5 group-hover:text-indigo-600 transition-colors truncate">${escapeHtml(s.name)}</div>
+            <div class="text-[10px] text-slate-400 mt-0.5 truncate">${escapeHtml(s.location || s.region || '全球节点')}</div>
+          </div>
+          <div class="mt-2.5 pt-2 border-t border-slate-100 text-[10px] flex items-center justify-between">
+            ${isOnline
+              ? '<span class="text-emerald-600 font-bold flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> 在线</span>'
+              : '<span class="text-slate-400 font-bold flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span> 离线</span>'}
+            <span class="text-slate-400 font-mono group-hover:text-indigo-600">详情 ↗</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+}
+
+async function initWorldMap() {
+  const inlineEl = document.getElementById('worldMapInlineContainer');
+  const modalEl = document.getElementById('worldMapModalContainer');
+  if (!inlineEl && !modalEl) return;
+  try {
+    if (!worldMapSvgRaw) {
+      const res = await fetch('/world_map.svg');
+      if (!res.ok) return;
+      worldMapSvgRaw = await res.text();
+    }
+    if (inlineEl && !inlineEl.hasChildNodes()) {
+      inlineEl.innerHTML = worldMapSvgRaw.replace(/id="realMapBg"/g, 'id="realMapBgInline"').replace(/url\(#realMapBg\)/g, 'url(#realMapBgInline)');
+    }
+    if (modalEl && !modalEl.hasChildNodes()) {
+      modalEl.innerHTML = worldMapSvgRaw.replace(/id="realMapBg"/g, 'id="realMapBgModal"').replace(/url\(#realMapBg\)/g, 'url(#realMapBgModal)');
+    }
+    renderWorldMapNodes();
+  } catch (e) {
+    console.error('Failed to load world_map.svg:', e);
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initTheme();
+  initWorldMap();
   setInterval(updateClock, 1000);
   updateClock();
 
@@ -3432,8 +3570,8 @@ document.addEventListener('DOMContentLoaded', () => {
 let deferredPwaPrompt = null;
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=43.0').then(reg => {
-      console.log('Tarnz PWA ServiceWorker registered with scope:', reg.scope);
+    navigator.serviceWorker.register('/sw.js?v=53.0').then(reg => {
+      console.log('Tanz PWA ServiceWorker registered with scope:', reg.scope);
     }).catch(err => {
       console.log('PWA ServiceWorker registration skipped:', err);
     });
@@ -3524,6 +3662,7 @@ async function testClientToNodesLatency() {
 // World Map Modal Controls (全球节点分布与拓扑大图放大弹窗)
 // ---------------------------------------------------------------------
 function openWorldMapModal() {
+  renderWorldMapNodes();
   const modal = document.getElementById('worldMapModal');
   if (!modal) return;
   modal.classList.remove('hidden');

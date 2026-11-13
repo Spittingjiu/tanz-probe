@@ -1,5 +1,5 @@
 // Tanz Probe Service Worker (PWA Cache & Offline Support)
-const CACHE_NAME = 'tanz-probe-v52.1';
+const CACHE_NAME = 'tanz-probe-v53.0';
 const PRECACHE_URLS = [
   '/',
   '/manifest.json',
@@ -46,7 +46,7 @@ self.addEventListener('fetch', event => {
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseToCache));
         }
         return networkResponse;
-      }).catch(() => caches.match(event.request) || caches.match('/'))
+      }).catch(() => caches.match(event.request).then(r => r || caches.match('/')))
     );
     return;
   }

@@ -559,6 +559,7 @@ func startPingWorker(nodeID string) {
 
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, 10) // max 10 concurrent pings
+		activeIDs := make(map[string]bool)
 
 		for _, t := range targets {
 			if t.Host == "" || t.ID == "" {
@@ -576,6 +577,7 @@ func startPingWorker(nodeID string) {
 					continue
 				}
 			}
+			activeIDs[t.ID] = true
 
 			wg.Add(1)
 			sem <- struct{}{}
@@ -583,7 +585,11 @@ func startPingWorker(nodeID string) {
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				cleanHost := strings.Split(tgt.Host, ":")[0]
+				cleanHost := strings.TrimSpace(tgt.Host)
+				if hostOnly, _, err := net.SplitHostPort(cleanHost); err == nil {
+					cleanHost = hostOnly
+				}
+				cleanHost = strings.Trim(cleanHost, "[]")
 				cmd := exec.Command("ping", "-c", "1", "-W", "1", cleanHost)
 				out, err := cmd.CombinedOutput()
 				lat := -1.0
@@ -601,6 +607,15 @@ func startPingWorker(nodeID string) {
 			}(t)
 		}
 		wg.Wait()
+
+		// Prune stale target IDs that were removed from master pingTargets
+		pingMu.Lock()
+		for id := range pingResults {
+			if !activeIDs[id] {
+				delete(pingResults, id)
+			}
+		}
+		pingMu.Unlock()
 
 		time.Sleep(time.Duration(intervalSec * float64(time.Second)))
 	}
@@ -632,8 +647,14 @@ func startRouteWorker() {
 
 		// 1. Telecom (CT) - Guangzhou Telecom: 113.108.209.1
 		outCT := runTraceroute("113.108.209.1")
-		if strings.Contains(outCT, "59.43.") {
-			results["telecom"] = "电信 CN2 GIA"
+		if outCT == "" {
+			results["telecom"] = "未知"
+		} else if strings.Contains(outCT, "59.43.") {
+			if strings.Contains(outCT, "202.97.") {
+				results["telecom"] = "电信 CN2 GT"
+			} else {
+				results["telecom"] = "电信 CN2 GIA"
+			}
 		} else if strings.Contains(outCT, "202.97.") {
 			results["telecom"] = "电信 163"
 		} else if strings.Contains(outCT, "218.105.") || strings.Contains(outCT, "210.51.") {
@@ -646,7 +667,9 @@ func startRouteWorker() {
 
 		// 2. Unicom (CU) - Shanghai Unicom: 210.22.80.1
 		outCU := runTraceroute("210.22.80.1")
-		if strings.Contains(outCU, "218.105.") || strings.Contains(outCU, "210.51.") {
+		if outCU == "" {
+			results["unicom"] = "未知"
+		} else if strings.Contains(outCU, "218.105.") || strings.Contains(outCU, "210.51.") {
 			results["unicom"] = "联通 9929"
 		} else if strings.Contains(outCU, "219.158.") {
 			results["unicom"] = "联通 4837"
@@ -658,7 +681,9 @@ func startRouteWorker() {
 
 		// 3. Mobile (CM) - Guangzhou Mobile: 120.196.165.24
 		outCM := runTraceroute("120.196.165.24")
-		if strings.Contains(outCM, "223.119.") {
+		if outCM == "" {
+			results["mobile"] = "未知"
+		} else if strings.Contains(outCM, "223.119.") {
 			results["mobile"] = "移动 CMIN2"
 		} else if strings.Contains(outCM, "223.120.") {
 			results["mobile"] = "移动 CMI"
@@ -684,18 +709,40 @@ func startRouteWorker() {
 	}()
 }
 
+func probeUnlockURL(client *http.Client, targetURL string) (int, string, string, error) {
+	req, err := http.NewRequest("GET", targetURL, nil)
+	if err != nil {
+		return 0, "", "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, "", "", err
+	}
+	defer resp.Body.Close()
+
+	buf := make([]byte, 65536)
+	n, _ := io.ReadFull(resp.Body, buf)
+	finalURL := ""
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+	return resp.StatusCode, string(buf[:n]), finalURL, nil
+}
+
 func startUnlockWorker() {
 	client := &http.Client{
-		Timeout: 4 * time.Second,
+		Timeout: 8 * time.Second,
 	}
 
 	checkAll := func() {
 		results := make(map[string]interface{})
 
 		// YouTube
-		if resp, err := client.Get("https://www.youtube.com/premium"); err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == 200 {
+		if code, body, _, err := probeUnlockURL(client, "https://www.youtube.com/premium"); err == nil {
+			if code == 200 && !strings.Contains(body, "Premium is not available in your country") {
 				results["youtube"] = "原生支持"
 			} else {
 				results["youtube"] = "不可用"
@@ -705,22 +752,24 @@ func startUnlockWorker() {
 		}
 
 		// Netflix
-		if resp, err := client.Get("https://www.netflix.com/title/80018499"); err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == 200 {
+		if code, body, _, err := probeUnlockURL(client, "https://www.netflix.com/title/80018499"); err == nil {
+			if code == 200 && !strings.Contains(body, "Oh no!") {
 				results["netflix"] = "原生解锁"
-			} else {
+			} else if code == 403 || code == 404 {
 				results["netflix"] = "仅自制剧"
+			} else {
+				results["netflix"] = "不可用"
 			}
 		} else {
 			results["netflix"] = "超时"
 		}
 
 		// Disney+
-		if resp, err := client.Get("https://www.disneyplus.com"); err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == 200 {
+		if code, body, finalURL, err := probeUnlockURL(client, "https://www.disneyplus.com"); err == nil {
+			if code == 200 && !strings.Contains(finalURL, "unavailable") && !strings.Contains(body, "not available in your region") {
 				results["disney"] = "支持"
+			} else if code == 403 {
+				results["disney"] = "限制访问"
 			} else {
 				results["disney"] = "不可用"
 			}
@@ -728,11 +777,12 @@ func startUnlockWorker() {
 			results["disney"] = "超时"
 		}
 
-		// ChatGPT
-		if resp, err := client.Get("https://chatgpt.com"); err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == 200 || resp.StatusCode == 403 {
+		// ChatGPT (403 indicates Cloudflare/IP block, not available)
+		if code, body, finalURL, err := probeUnlockURL(client, "https://chatgpt.com"); err == nil {
+			if code == 200 && !strings.Contains(body, "cf-browser-verification") && !strings.Contains(finalURL, "unsupported") {
 				results["chatgpt"] = "可用"
+			} else if code == 403 {
+				results["chatgpt"] = "限制访问"
 			} else {
 				results["chatgpt"] = "不可用"
 			}
@@ -740,11 +790,12 @@ func startUnlockWorker() {
 			results["chatgpt"] = "超时"
 		}
 
-		// Claude
-		if resp, err := client.Get("https://claude.ai"); err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == 200 || resp.StatusCode == 403 {
+		// Claude (403 indicates Cloudflare/region block)
+		if code, body, finalURL, err := probeUnlockURL(client, "https://claude.ai"); err == nil {
+			if code == 200 && !strings.Contains(finalURL, "app-unavailable") && !strings.Contains(body, "app-unavailable") {
 				results["claude"] = "原生解锁"
+			} else if code == 403 {
+				results["claude"] = "限制访问"
 			} else {
 				results["claude"] = "不可用"
 			}
@@ -806,7 +857,7 @@ func main() {
 		cfg.NodeID = "node-default"
 	}
 	if cfg.MasterURL == "" {
-		cfg.MasterURL = "https://tanz.example.com"
+		cfg.MasterURL = "http://127.0.0.1:5555"
 	}
 	cfg.MasterURL = strings.TrimRight(cfg.MasterURL, "/")
 
@@ -822,7 +873,7 @@ func main() {
 	go startRouteWorker()
 
 	httpClient := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout: 8 * time.Second,
 		Transport: &http.Transport{
 			DialContext: (&net.Dialer{
 				Timeout:   3 * time.Second,

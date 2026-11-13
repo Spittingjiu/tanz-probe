@@ -1,6 +1,6 @@
 <svg viewBox="0 0 2000 857" class="w-full h-auto drop-shadow-xs" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
   <defs>
-    <linearGradient id="realMapBg" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="realMapBg" class="real-map-bg" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#f8fafc" />
       <stop offset="100%" stop-color="#f1f5f9" />
     </linearGradient>
@@ -57,52 +57,5 @@
     <animate attributeName="stroke-dashoffset" values="64;0" dur="2.5s" repeatCount="indefinite" />
   </path>
 
-  <!-- Interactive Nodes -->
-  <!-- Node 1: US West (node-la & node-cc, Los Angeles) at (375, 285) -->
-  <g class="cursor-pointer group" onclick="if(typeof closeWorldMapModal==='function') closeWorldMapModal(); if(typeof openServerDetail==='function') openServerDetail('node-la');">
-    <circle cx="375" cy="285" r="42" fill="url(#radarGlowIndigo)">
-      <animate attributeName="r" values="16;48;16" dur="3s" repeatCount="indefinite" />
-      <animate attributeName="opacity" values="0.85;0.1;0.85" dur="3s" repeatCount="indefinite" />
-    </circle>
-    <circle cx="375" cy="285" r="11" fill="#4f46e5" stroke="#ffffff" stroke-width="3.5" />
-    <!-- Node Label Badge -->
-    <rect x="235" y="210" width="280" height="46" rx="12" fill="#ffffff" stroke="#c7d2fe" stroke-width="1.8" filter="drop-shadow(0 4px 6px rgba(0,0,0,0.08))" />
-    <text x="375" y="239" font-size="20" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="700" fill="#3730a3" text-anchor="middle">🇺🇸 洛杉矶 (2台节点)</text>
-  </g>
-
-  <!-- Node 2: Europe (node-de, Frankfurt) at (1050, 185) -->
-  <g class="cursor-pointer group" onclick="if(typeof closeWorldMapModal==='function') closeWorldMapModal(); if(typeof openServerDetail==='function') openServerDetail('node-de');">
-    <circle cx="1050" cy="185" r="42" fill="url(#radarGlowEmerald)">
-      <animate attributeName="r" values="16;48;16" dur="3s" begin="0.7s" repeatCount="indefinite" />
-      <animate attributeName="opacity" values="0.85;0.1;0.85" dur="3s" begin="0.7s" repeatCount="indefinite" />
-    </circle>
-    <circle cx="1050" cy="185" r="11" fill="#059669" stroke="#ffffff" stroke-width="3.5" />
-    <!-- Node Label Badge -->
-    <rect x="915" y="110" width="270" height="46" rx="12" fill="#ffffff" stroke="#a7f3d0" stroke-width="1.8" filter="drop-shadow(0 4px 6px rgba(0,0,0,0.08))" />
-    <text x="1050" y="139" font-size="20" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="700" fill="#065f46" text-anchor="middle">🇩🇪 德国 · 法兰克福</text>
-  </g>
-
-  <!-- Node 3: Hong Kong (node-hk) at (1575, 345) -->
-  <g class="cursor-pointer group" onclick="if(typeof closeWorldMapModal==='function') closeWorldMapModal(); if(typeof openServerDetail==='function') openServerDetail('node-hk');">
-    <circle cx="1575" cy="345" r="42" fill="url(#radarGlowAmber)">
-      <animate attributeName="r" values="16;48;16" dur="3s" begin="1.4s" repeatCount="indefinite" />
-      <animate attributeName="opacity" values="0.85;0.1;0.85" dur="3s" begin="1.4s" repeatCount="indefinite" />
-    </circle>
-    <circle cx="1575" cy="345" r="11" fill="#d97706" stroke="#ffffff" stroke-width="3.5" />
-    <!-- Node Label Badge -->
-    <rect x="1440" y="270" width="270" height="46" rx="12" fill="#ffffff" stroke="#fde68a" stroke-width="1.8" filter="drop-shadow(0 4px 6px rgba(0,0,0,0.08))" />
-    <text x="1575" y="299" font-size="20" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="700" fill="#92400e" text-anchor="middle">🇭🇰 中国 · 香港 BGP</text>
-  </g>
-
-  <!-- Node 4: Tokyo (node-jp) at (1720, 270) -->
-  <g class="cursor-pointer group" onclick="if(typeof closeWorldMapModal==='function') closeWorldMapModal(); if(typeof openServerDetail==='function') openServerDetail('node-jp');">
-    <circle cx="1720" cy="270" r="42" fill="url(#radarGlowSky)">
-      <animate attributeName="r" values="16;48;16" dur="3s" begin="2.1s" repeatCount="indefinite" />
-      <animate attributeName="opacity" values="0.85;0.1;0.85" dur="3s" begin="2.1s" repeatCount="indefinite" />
-    </circle>
-    <circle cx="1720" cy="270" r="11" fill="#0284c7" stroke="#ffffff" stroke-width="3.5" />
-    <!-- Node Label Badge -->
-    <rect x="1595" y="195" width="250" height="46" rx="12" fill="#ffffff" stroke="#bae6fd" stroke-width="1.8" filter="drop-shadow(0 4px 6px rgba(0,0,0,0.08))" />
-    <text x="1720" y="224" font-size="20" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="700" fill="#075985" text-anchor="middle">🇯🇵 日本 · 东京</text>
-  </g>
+  <g class="dynamic-map-nodes"></g>
 </svg>
