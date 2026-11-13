@@ -153,14 +153,21 @@ cd "$AGENT_DIR"
 echo -e "${C_BLUE}[2/4] 从主控下载探针核心程序...${C_RESET}"
 DOWNLOAD_SUCCESS=false
 
-# Try downloading compiled Go binary
-if curl -fsSL --connect-timeout 8 "${MASTER_URL}/${BIN_NAME}" -o "$AGENT_DIR/tanz-agent" 2>/dev/null || \
-   curl -fsSL --connect-timeout 8 "${MASTER_URL}/tanz-agent" -o "$AGENT_DIR/tanz-agent" 2>/dev/null; then
-    chmod +x "$AGENT_DIR/tanz-agent"
-    if "$AGENT_DIR/tanz-agent" -v >/dev/null 2>&1 || [ -s "$AGENT_DIR/tanz-agent" ]; then
+# Download compiled Go binary into staging file first to avoid ETXTBSY on running agent
+TMP_AGENT="$AGENT_DIR/tanz-agent.tmp.$$"
+rm -f "$TMP_AGENT"
+if curl -fsSL --connect-timeout 8 "${MASTER_URL}/${BIN_NAME}" -o "$TMP_AGENT" 2>/dev/null; then
+    SZ=$(wc -c < "$TMP_AGENT" 2>/dev/null || echo 0)
+    if [ "$SZ" -ge 500000 ]; then
+        systemctl stop tanz-agent 2>/dev/null || true
+        killall tanz-agent 2>/dev/null || true
+        chmod +x "$TMP_AGENT"
+        mv -f "$TMP_AGENT" "$AGENT_DIR/tanz-agent"
         DOWNLOAD_SUCCESS=true
         AGENT_EXEC="$AGENT_DIR/tanz-agent"
         echo -e "${C_GREEN}✓ 零频 Go 微核心二进制下载并校验成功！${C_RESET}"
+    else
+        rm -f "$TMP_AGENT"
     fi
 fi
 

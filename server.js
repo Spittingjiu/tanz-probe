@@ -2468,32 +2468,61 @@ BIN_FILE="tanz-agent"
 
 case "$ARCH" in
   x86_64|amd64)
-    BIN_FILE="tanz-agent"
+    BIN_FILE="tanz-agent-linux-amd64"
+    FALLBACK_FILE="tanz-agent"
     ;;
   aarch64|arm64)
-    BIN_FILE="tanz-agent-arm64"
+    BIN_FILE="tanz-agent-linux-arm64"
+    FALLBACK_FILE="tanz-agent-arm64"
+    ;;
+  armv7*|armhf)
+    BIN_FILE="tanz-agent-linux-armv7"
+    FALLBACK_FILE=""
     ;;
   *)
     BIN_FILE="tanz-agent"
+    FALLBACK_FILE=""
     ;;
 esac
 
 echo "Detected Machine Architecture: $ARCH -> Selecting $BIN_FILE"
 
-# Try downloading native static binary
+# Download into a temporary staging path first to avoid ETXTBSY ("write error") when overwriting a running binary
+TMP_BIN="$INSTALL_DIR/tanz-agent.tmp.$$"
+rm -f "$TMP_BIN"
 DOWNLOADED=false
+
 echo "Downloading binary from $MASTER_URL/$BIN_FILE ..."
-if download "$MASTER_URL/$BIN_FILE" "$INSTALL_DIR/tanz-agent"; then
-  chmod +x "$INSTALL_DIR/tanz-agent"
+if download "$MASTER_URL/$BIN_FILE" "$TMP_BIN" && [ -s "$TMP_BIN" ] && [ "$(wc -c < "$TMP_BIN")" -ge 500000 ]; then
   DOWNLOADED=true
   echo "✅ Downloaded native binary agent successfully!"
-else
-  echo "⚠️ Binary download failed, attempting fallback..."
-  if download "$MASTER_URL/tanz-agent" "$INSTALL_DIR/tanz-agent"; then
-    chmod +x "$INSTALL_DIR/tanz-agent"
+elif [ -n "$FALLBACK_FILE" ]; then
+  echo "⚠️ Primary download failed, attempting same-arch fallback ($FALLBACK_FILE)..."
+  rm -f "$TMP_BIN"
+  if download "$MASTER_URL/$FALLBACK_FILE" "$TMP_BIN" && [ -s "$TMP_BIN" ] && [ "$(wc -c < "$TMP_BIN")" -ge 500000 ]; then
     DOWNLOADED=true
+    echo "✅ Downloaded fallback binary agent successfully!"
   fi
 fi
+
+if [ "$DOWNLOADED" != "true" ]; then
+  rm -f "$TMP_BIN"
+  echo "❌ Error: Failed to download $BIN_FILE from $MASTER_URL"
+  echo "   Please check network connectivity and available disk space:"
+  df -h "$INSTALL_DIR" /tmp 2>/dev/null || true
+  exit 1
+fi
+
+# Stop existing agent cleanly before atomic replace
+systemctl stop tanz-agent 2>/dev/null || true
+if [ -x /etc/init.d/tanz-agent ]; then
+  /etc/init.d/tanz-agent stop 2>/dev/null || true
+fi
+killall tanz-agent 2>/dev/null || true
+sleep 1
+
+chmod +x "$TMP_BIN"
+mv -f "$TMP_BIN" "$INSTALL_DIR/tanz-agent"
 
 # Write config.json
 cat <<EOF > "$INSTALL_DIR/config.json"
